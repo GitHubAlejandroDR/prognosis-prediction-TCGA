@@ -1,0 +1,172 @@
+
+```{r}
+# Load clinical sample data
+clinical_sample_data <- read.delim(RAW_CLINICAL_SAMPLE, header = FALSE, sep = "\t", dec = ".", fill = TRUE)
+
+# Load clinical data
+clinical_data <- read.delim(RAW_CLINICAL_PATIENT, header = FALSE, sep = "\t", dec = ".", fill = TRUE)
+
+# Load methylation data
+methylation_data <- read.table(RAW_METHYLATION, header = FALSE, sep = "\t", dec = ".", fill = TRUE)
+
+# Load genomic raw data
+genomic_data <- read.table(RAW_GENOMIC, header = FALSE, sep = "\t", dec = ".", fill = TRUE)
+
+# Load microbiome data
+microbiome_data <- read.table(RAW_MICROBIOME, header = FALSE, sep = "\t", dec = ".", fill = TRUE)
+
+# borrar constantes que ya no se necesitan
+rm(RAW_CLINICAL_SAMPLE, RAW_CLINICAL_PATIENT, RAW_METHYLATION, RAW_GENOMIC, RAW_MICROBIOME)
+```
+
+## Head Raw `clinical_data`
+
+```{r, echo=FALSE}
+rmarkdown::paged_table(head(clinical_sample_data), options = list(rows.print = 10, cols.print = 5))
+```
+
+## Head Raw `clinical_sample_data`
+
+```{r, echo=FALSE}
+rmarkdown::paged_table(head(clinical_data), options = list(rows.print = 10, cols.print = 5))
+```
+
+## Head Raw `genomic_data`
+
+```{r, echo=FALSE}
+rmarkdown::paged_table(head(genomic_data), options = list(rows.print = 10, cols.print = 5))
+```
+
+## Head Raw `methylation_data`
+
+```{r, echo=FALSE}
+rmarkdown::paged_table(head(methylation_data), options = list(rows.print = 10, cols.print = 5))
+```
+
+## Head Raw `microbiome_data`
+
+```{r, echo=FALSE}
+rmarkdown::paged_table(head(microbiome_data), options = list(rows.print = 10, cols.print = 5))
+```
+
+## Reformat data
+
+```{r}
+# Delete first four rows clinical sample data
+clinical_sample_data <- clinical_sample_data[-c(1:4), ]
+
+# Delete first four rows clinical data
+clinical_data <- clinical_data[-c(1:4), ]
+```
+
+
+## Define row and column names
+
+```{r}
+# Define col names clinical sample data
+colnames(clinical_sample_data) <- clinical_sample_data[1, ]
+clinical_sample_data <- clinical_sample_data[-1, ]
+
+# Define col names in clinical data
+colnames(clinical_data) <- clinical_data[1, ]
+clinical_data <- clinical_data[-1, ]
+
+# -----------------------
+
+# Define SAMPLE_ID
+clinical_data$SAMPLE_ID <- clinical_sample_data$SAMPLE_ID
+
+# Delete duplicate SAMPLE_ID
+clinical_data <- clinical_data[c(duplicated(clinical_data$SAMPLE_ID) == FALSE), ]
+
+# Define SAMPLE_ID as row names in clinical data
+row.names(clinical_data) <- clinical_data$SAMPLE_ID
+
+# -----------------------
+
+# Define col names in methylation data
+colnames(methylation_data) <- methylation_data[1, ]
+methylation_data <- methylation_data[-1, ]
+
+# Define ENTITY_STABLE_ID as row names in methylation data
+row.names(methylation_data) <- methylation_data$ENTITY_STABLE_ID
+methylation_data <- methylation_data[, -c(1)]
+
+# Delete duplicate rownames
+methylation_data <- methylation_data[unique(row.names(methylation_data)), ]
+
+# -----------------------
+
+# Define colnames genomic raw data
+colnames(genomic_data) <- genomic_data[1, ]
+genomic_data <- genomic_data[-1, ]
+
+# Subset where Hugo_Symbol is not na
+genomic_data <- subset(genomic_data, is.na(Hugo_Symbol) == FALSE)
+
+# Delete duplicate Hugo_Symbol
+genomic_data <- genomic_data[c(duplicated(genomic_data$Hugo_Symbol) == FALSE), ]
+
+# Define Hugo_Symbol as row names in genomic raw data
+row.names(genomic_data) <- genomic_data$Hugo_Symbol
+genomic_data <- genomic_data[, -c(1)]
+
+# -----------------------
+
+# Define col names in microbiome data
+colnames(microbiome_data) <- microbiome_data[1, ]
+microbiome_data <- microbiome_data[-1, ]
+
+# Subset where ENTITY_STABLE_ID is not na
+microbiome_data <- subset(microbiome_data, is.na(ENTITY_STABLE_ID) == FALSE)
+
+# Delete duplicate ENTITY_STABLE_ID
+microbiome_data <- microbiome_data[c(duplicated(microbiome_data$ENTITY_STABLE_ID) == FALSE), ]
+
+# Define ENTITY_STABLE_ID as data row names in microbiome data
+row.names(microbiome_data) <- microbiome_data$ENTITY_STABLE_ID
+
+# -----------------------
+
+# Order sample ids in alfabetical order
+clinical_data <- clinical_data[order(row.names(clinical_data)), ]
+genomic_data <- genomic_data %>% select(order(colnames(genomic_data)))
+methylation_data <- methylation_data %>% select(order(colnames(methylation_data)))
+microbiome_data <- microbiome_data %>% select(order(colnames(microbiome_data)))
+
+# -----------------------
+
+# Select variables subset
+
+# Subset clinical data variables
+clinical_col_selec <- c("RACE", "OS_STATUS", "OS_MONTHS")
+clinical_data <- clinical_data %>% select(clinical_col_selec)
+
+# Subset genomic raw data variables
+genomic_data <- genomic_data[, -c(1)]
+
+# Subset methylation data variables
+methylation_data <- methylation_data[, -c(1:4)]
+
+# Subset microbiome data variables
+microbiome_data <- microbiome_data[, -c(1:4)]
+
+rm(clinical_col_selec)
+```
+
+
+## Replace blank spaces with na's
+
+```{r}
+# Replace blank spaces with na's
+clinical_sample_data <- clinical_sample_data %>%
+  mutate(across(where(is.character), ~ na_if(., "")))
+clinical_data <- clinical_data %>%
+  mutate(across(where(is.character), ~ na_if(., "")))
+methylation_data <- methylation_data %>%
+  mutate(across(where(is.character), ~ na_if(., "")))
+genomic_data <- genomic_data %>%
+  mutate(across(where(is.character), ~ na_if(., "")))
+microbiome_data <- microbiome_data %>%
+  mutate(across(where(is.character), ~ na_if(., "")))
+```

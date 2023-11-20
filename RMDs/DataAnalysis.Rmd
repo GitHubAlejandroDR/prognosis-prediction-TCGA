@@ -1,0 +1,247 @@
+## Summary Raw `clinical_data`
+
+```{r, echo=FALSE}
+summary_clinical_data <- translate_introduce_columns(introduce(clinical_data))
+columns_subset <- c("Filas", "Columnas", "Columnas Discretas", "Columnas Continuas", "Total Columnas Nulas", "NAs", "Observaciones Totales", "Filas Completas")
+rmarkdown::paged_table(summary_clinical_data[,columns_subset], options = list(rows.print = 15, cols.print = 5))
+```
+
+```{r, echo=FALSE}
+write.csv(summary_clinical_data[,columns_subset], file = paste0(PLOTS_DIR, "summary_clinical_data.csv"), row.names = FALSE)
+rm(summary_clinical_data, columns_subset)
+```
+
+## Summary Raw `clinical_sample_data`
+
+```{r, echo=FALSE}
+summary_clinical_sample_data <- translate_introduce_columns(introduce(clinical_sample_data))
+columns_subset <- c("Filas", "Columnas", "Columnas Discretas", "Columnas Continuas", "Total Columnas Nulas", "NAs", "Observaciones Totales", "Filas Completas")
+rmarkdown::paged_table(summary_clinical_sample_data[,columns_subset], options = list(rows.print = 15, cols.print = 5))
+```
+
+```{r, echo=FALSE}
+write.csv(summary_clinical_sample_data[,columns_subset], file = paste0(PLOTS_DIR, "summary_clinical_sample_data.csv"), row.names = FALSE)
+rm(summary_clinical_sample_data, columns_subset)
+```
+
+## Summary Raw `genomic_data`
+
+```{r, echo=FALSE}
+summary_genomic_data <- translate_introduce_columns(introduce(genomic_data))
+columns_subset <- c("Filas", "Columnas", "Columnas Discretas", "Columnas Continuas", "Total Columnas Nulas", "NAs", "Observaciones Totales", "Filas Completas")
+rmarkdown::paged_table(summary_genomic_data[,columns_subset], options = list(rows.print = 15, cols.print = 5))
+```
+
+```{r, echo=FALSE}
+write.csv(summary_genomic_data[,columns_subset], file = paste0(PLOTS_DIR, "summary_genomic_data.csv"), row.names = FALSE)
+rm(summary_genomic_data, columns_subset)
+```
+
+## Summary Raw `methylation_data`
+
+```{r, echo=FALSE}
+summary_methylation_data <- translate_introduce_columns(introduce(methylation_data))
+columns_subset <- c("Filas", "Columnas", "Columnas Discretas", "Columnas Continuas", "Total Columnas Nulas", "NAs", "Observaciones Totales", "Filas Completas")
+rmarkdown::paged_table(summary_methylation_data[,columns_subset], options = list(rows.print = 15, cols.print = 5))
+```
+
+```{r, echo=FALSE}
+write.csv(summary_methylation_data[,columns_subset], file = paste0(PLOTS_DIR, "summary_methylation_data.csv"), row.names = FALSE)
+rm(summary_methylation_data, columns_subset)
+```
+
+## Summary Raw `microbiome_data`
+
+```{r, echo=FALSE}
+summary_microbiome_data <- translate_introduce_columns(introduce(microbiome_data))
+columns_subset <- c("Filas", "Columnas", "Columnas Discretas", "Columnas Continuas", "Total Columnas Nulas", "NAs", "Observaciones Totales", "Filas Completas")
+rmarkdown::paged_table(summary_microbiome_data[,columns_subset], options = list(rows.print = 15, cols.print = 5))
+```
+
+```{r, echo=FALSE}
+write.csv(summary_microbiome_data[,columns_subset], file = paste0(PLOTS_DIR, "summary_microbiome_data.csv"), row.names = FALSE)
+rm(summary_microbiome_data, columns_subset)
+```
+
+## Null Values `clinical_data`
+
+```{r, echo=FALSE}
+null_clinical_data <- vis_miss(clinical_data[, c("RACE", "OS_STATUS", "OS_MONTHS")], show_perc = F)
+null_clinical_data <- null_clinical_data + labs(y="Observaciones") +  scale_fill_discrete(name = "NAs", labels = c("NAs", "Presente")) + scale_fill_grey()
+null_clinical_data
+```
+
+```{r, echo=FALSE, include=FALSE}
+jpeg(file = paste0(PLOTS_DIR, "clinical_data_plot1.jpeg"))
+null_clinical_data
+dev.off()
+
+rm(null_clinical_data)
+```
+
+
+## Null Values `clinical_data`: Race
+
+```{r, echo=FALSE}
+prop_race <- as.data.frame(table(clinical_data$RACE))[3:4, ] %>%
+  mutate(percent = Freq / sum(Freq))
+
+barplot(prop_race$percent,
+  main = "Porcentaje de valores nulos en la variable Race",
+  xlab = "Categorias", ylab = "Porcentaje",
+  names.arg = as.vector(prop_race$Var1))
+
+
+```
+
+```{r, echo=FALSE}
+jpeg(file = paste0(PLOTS_DIR, "clinical_data_plot2.jpeg"))
+barplot(prop_race$percent,
+  main = "Porcentaje de valores nulos en la variable Race",
+  xlab = "Categorias", ylab = "Porcentaje",
+  names.arg = as.vector(prop_race$Var1))
+dev.off()
+
+rm(prop_race)
+```
+
+## Observaciones de la variable RACE en `clinical data`
+
+```{r, echo=FALSE}
+barplot(as.numeric(base::table(clinical_data$RACE[clinical_data$RACE %in% c("White", "Black or African American")])),
+  main = "Observaciones de la variable RACE", ylim = c(0, 500),
+  xlab = "Subcategorias", ylab = "Observaciones",
+  names.arg = as.vector(names(table(clinical_data$RACE[clinical_data$RACE %in% c("White", "Black or African American")])))
+)
+```
+
+
+```{r, echo=FALSE}
+jpeg(file=paste0(PLOTS_DIR, "clinical_data_plot6.jpeg"))
+barplot(as.numeric(base::table(clinical_data$RACE[clinical_data$RACE %in% c("White", "Black or African American")])),
+  main = "Observaciones de la variable RACE", ylim = c(0, 500),
+  xlab = "Subcategorias", ylab = "Observaciones",
+  names.arg = as.vector(names(table(clinical_data$RACE[clinical_data$RACE %in% c("White", "Black or African American")])))
+)
+dev.off()
+```
+
+## Observaciones de la variable OS STATUS en `clinical data`
+
+```{r, echo=FALSE}
+barplot(as.numeric(base::table(clinical_data$OS_STATUS)),
+  main = "Observaciones de la variable OS STATUS", ylim = c(0, 500),
+  xlab = "Subcategorias", ylab = "Observaciones",
+  names.arg = as.vector(names(table(clinical_data$OS_STATUS)))
+)
+```
+
+
+```{r, echo=FALSE}
+jpeg(file=paste0(PLOTS_DIR, "clinical_data_plot3.jpeg"))
+barplot(as.numeric(base::table(clinical_data$OS_STATUS)),
+  main = "Observaciones de la variable OS STATUS", ylim = c(0, 500),
+  xlab = "Subcategorias", ylab = "Observaciones",
+  names.arg = as.vector(names(table(clinical_data$OS_STATUS)))
+)
+dev.off()
+```
+
+## OS STATUS donde RACE = Black or African American
+
+```{r, echo=FALSE}
+barplot(as.numeric(base::table(clinical_data$OS_STATUS[clinical_data$RACE == "Black or African American"])),
+  main = "OS STATUS donde RACE = Black or African American", ylim = c(0, 150),
+  xlab = "Subcategorias", ylab = "Observaciones",
+  names.arg = as.vector(names(table(clinical_data$OS_STATUS)))
+)
+```
+
+
+```{r, echo=FALSE}
+jpeg(file=paste0(PLOTS_DIR, "clinical_data_plot4.jpeg"))
+barplot(as.numeric(base::table(clinical_data$OS_STATUS[clinical_data$RACE == "Black or African American"])),
+  main = "OS STATUS donde RACE = Black or African American", ylim = c(0, 150),
+  xlab = "Subcategorias", ylab = "Observaciones",
+  names.arg = as.vector(names(table(clinical_data$OS_STATUS)))
+)
+dev.off()
+```
+
+## OS STATUS donde RACE = White
+
+```{r, echo=FALSE}
+barplot(as.numeric(base::table(clinical_data$OS_STATUS[clinical_data$RACE == "White"])),
+  main = "OS STATUS donde RACE = White", ylim = c(0, 500),
+  xlab = "Subcategorias", ylab = "Observaciones",
+  names.arg = as.vector(names(table(clinical_data$OS_STATUS)))
+)
+```
+
+```{r, echo=FALSE}
+jpeg(file=paste0(PLOTS_DIR, "clinical_data_plot5.jpeg"))
+barplot(as.numeric(base::table(clinical_data$OS_STATUS[clinical_data$RACE == "White"])),
+  main = "OS STATUS donde RACE = White", ylim = c(0, 500),
+  xlab = "Subcategorias", ylab = "Observaciones",
+  names.arg = as.vector(names(table(clinical_data$OS_STATUS)))
+)
+dev.off()
+```
+
+## Null Values `clinical_sample_data`
+
+```{r, echo=FALSE}
+vis_miss(clinical_sample_data[, c("PATIENT_ID", "SAMPLE_ID")], show_perc = F)
+```
+
+```{r, echo=FALSE}
+jpeg(file = paste0(PLOTS_DIR, "clinical_sample_data_plot1.jpeg"))
+vis_miss(clinical_sample_data[, c("PATIENT_ID", "SAMPLE_ID")], show_perc = F)
+dev.off()
+```
+
+## Null Values `methylation_data`
+
+```{r, echo=FALSE}
+hist(as.integer(sapply(methylation_data, function(x) sum(is.na(x)))), breaks = "Freedman-Diaconis", main = "NAs en Methylation data ", ylim = c(0, 300), xlim = range(-1, 20, 1), freq = T, include.lowest = TRUE, xlab = "Valores NAs", ylab = "Nº Observaciones")
+```
+
+```{r, echo=FALSE}
+jpeg(file = paste0(PLOTS_DIR, "methylation_data_plot1.jpeg"))
+hist(as.integer(sapply(methylation_data, function(x) sum(is.na(x)))), breaks = 40, main = "NAs en methylation data ", ylim = c(0, 600), xlab = "Valores NAs", ylab = "Nº Observaciones")
+dev.off()
+```
+
+## Table Null Values `methylation_data`
+
+```{r, echo=FALSE}
+df_null_methylation <- as.data.frame(miss_case_table(as.data.frame(t(methylation_data))))
+df_null_methylation <- setNames(df_null_methylation, c("Número de Nulos por Observación", "Número de Observaciones", "Porcentaje de Observaciones"))
+df_null_methylation <- df_null_methylation[order(df_null_methylation$`Porcentaje de Observaciones`, decreasing = TRUE), ]
+grid.table(df_null_methylation[0:15, ], rows = c(1:15))
+```
+
+```{r, echo=FALSE}
+write.csv(df_null_methylation[0:15, ], file = paste0(PLOTS_DIR, "methylation_data_table1.csv"), row.names = FALSE)
+
+rm(df_null_methylation)
+```
+
+```{r, echo=FALSE, eval=FALSE}
+png(paste0(PLOTS_DIR, "methylation_data_table1.png"))
+grid.table(df_null_methylation[0:15, ], rows = c(1:15))
+dev.off()
+```
+
+## Null Values `genomic_data`
+
+```{r, echo=FALSE}
+hist(as.integer(sapply(genomic_data, function(x) sum(is.na(x)))), breaks = 40, main = "NAs en genomic raw data ", ylim = c(0, 600), xlab = "Valores NAs", ylab = "Nº Observaciones")
+```
+
+```{r, echo=FALSE}
+jpeg(file = paste0(PLOTS_DIR, "genomic_data_plot1.jpeg"))
+hist(as.integer(sapply(genomic_data, function(x) sum(is.na(x)))), breaks = 40, main = "NAs en genomic raw data ", ylim = c(0, 600), xlab = "Valores NAs", ylab = "Nº Observaciones")
+dev.off()
+```
+

@@ -1,0 +1,116 @@
+## Create Clinical Data Frame at Fixed Date Point: 5 years (1825 days)
+
+```{r}
+clinical_data_fixed <- create_data_fixed(clinical_data, DAYS)
+```
+
+## `clinical_data_fixed` Analysis
+
+## Observaciones de la variable RACE
+
+```{r, echo=FALSE}
+barplot(as.numeric(base::table(clinical_data_fixed$RACE)),
+  main = "Observaciones de la variable RACE", ylim = c(0, 120),
+  xlab = "Subcategorias", ylab = "Observaciones",
+  names.arg = as.vector(names(base::table(clinical_data_fixed$RACE)))
+)
+```
+
+```{r, echo=FALSE}
+jpeg(file=paste0(PLOTS_DIR, "clinical_data_fixed_plot1.jpeg"))
+barplot(as.numeric(base::table(clinical_data_fixed$RACE)),
+  main = "Observaciones de la variable RACE", ylim = c(0, 120),
+  xlab = "Subcategorias", ylab = "Observaciones",
+  names.arg = as.vector(names(base::table(clinical_data_fixed$RACE)))
+)
+dev.off()
+```
+
+## Observaciones de la variable OS STATUS
+
+```{r, echo=FALSE}
+barplot(as.numeric(base::table(clinical_data_fixed$OS_STATUS)),
+  main = "Observaciones de la variable OS STATUS", ylim = c(0, 120),
+  xlab = "Subcategorias", ylab = "Observaciones",
+  names.arg = as.vector(names(table(clinical_data_fixed$OS_STATUS)))
+)
+```
+
+
+```{r, echo=FALSE}
+jpeg(file=paste0(PLOTS_DIR, "clinical_data_fixed_plot2.jpeg"))
+barplot(as.numeric(base::table(clinical_data_fixed$OS_STATUS)),
+  main = "Observaciones de la variable OS STATUS", ylim = c(0, 120),
+  xlab = "Subcategorias", ylab = "Observaciones",
+  names.arg = as.vector(names(table(clinical_data_fixed$OS_STATUS)))
+)
+dev.off()
+```
+
+## OS STATUS donde RACE = White
+
+```{r, echo=FALSE}
+barplot(as.numeric(base::table(clinical_data_fixed$OS_STATUS[clinical_data_fixed$RACE == "White"])),
+  main = "OS STATUS donde RACE = White", ylim = c(0, 150),
+  xlab = "Subcategorias", ylab = "Observaciones",
+  names.arg = as.vector(names(table(clinical_data_fixed$OS_STATUS)))
+)
+```
+
+
+```{r, echo=FALSE}
+jpeg(file=paste0(PLOTS_DIR, "clinical_data_fixed_plot3.jpeg"))
+barplot(as.numeric(base::table(clinical_data_fixed$OS_STATUS[clinical_data_fixed$RACE == "White"])),
+  main = "OS STATUS donde RACE = White", ylim = c(0, 150),
+  xlab = "Subcategorias", ylab = "Observaciones",
+  names.arg = as.vector(names(table(clinical_data_fixed$OS_STATUS)))
+)
+dev.off()
+```
+
+## OS STATUS donde RACE = Black or African American
+
+```{r, echo=FALSE}
+barplot(as.numeric(base::table(clinical_data_fixed$OS_STATUS[clinical_data_fixed$RACE == "Black or African American"])),
+  main = "OS STATUS donde RACE = Black or African American", ylim = c(0, 80),
+  xlab = "Subcategorias", ylab = "Observaciones",
+  names.arg = as.vector(names(table(clinical_data_fixed$OS_STATUS)))
+)
+```
+
+```{r, echo=FALSE}
+jpeg(file=paste0(PLOTS_DIR, "clinical_data_fixed_plot4.jpeg"))
+barplot(as.numeric(base::table(clinical_data_fixed$OS_STATUS[clinical_data_fixed$RACE == "Black or African American"])),
+  main = "OS STATUS donde RACE = Black or African American", ylim = c(0, 80),
+  xlab = "Subcategorias", ylab = "Observaciones",
+  names.arg = as.vector(names(table(clinical_data_fixed$OS_STATUS)))
+)
+dev.off()
+```
+
+## Summary `clinical_data_fixed`
+
+```{r, echo=FALSE}
+summary_clinical_data_fixed <- translate_introduce_columns(introduce(clinical_data_fixed))
+columns_subset <- c("Filas", "Columnas", "Columnas Discretas", "Columnas Continuas", "NAs")
+rmarkdown::paged_table(summary_clinical_data_fixed[,columns_subset], options = list(rows.print = 15, cols.print = 5))
+```
+
+```{r, echo=FALSE}
+write.csv(summary_clinical_data_fixed[,columns_subset], file = paste0(PLOTS_DIR, "summary_clinical_data_fixed.csv"), row.names = FALSE)
+rm(summary_clinical_data_fixed, columns_subset)
+```
+
+## Update Matching Samples ids in All Data Frames
+
+```{r}
+omic_dfs <- list(genomic_data, methylation_data, microbiome_data)
+matched_df <- match_samples(clinical_data_fixed, omic_dfs)
+
+clinical_data_fixed <- matched_df$clinical_data
+genomic_data <- matched_df$omic_dfs[1][[1]]
+methylation_data <- matched_df$omic_dfs[2][[1]]
+microbiome_data <- matched_df$omic_dfs[3][[1]]
+
+rm(omic_dfs, matched_df)
+```

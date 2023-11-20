@@ -1,0 +1,2073 @@
+---
+title: "TFG_full_worflow"
+author: "Alejandro Domínguez Recio"
+date: "2023-11-20"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Configure
+
+```{r}
+# %%%%%%%%%%%%%%%%%%%%%%%
+# ENVIRONMENT PREPARATION
+
+rm(list=ls())
+gc()
+graphics.off()
+
+PROJECT_NAME = "Applying machine learning to predict pathology response in colorectal cancer"
+
+# %%%%%%%%%%%%%%%%%%%
+# LIBRARIES ARGUMENTS
+
+PKG_UPDATE = TRUE
+VERBOSE_MODE = TRUE
+
+# %%%%%%%%%%%%%%%%
+# BASE DIRECTORIES
+
+CODE_DIR = r"(C:/Users/aleja/Documents/github_repositories/prognosis-prediction-TCGA/code/)"
+RMDs_DIR = r"(C:/Users/aleja/Documents/github_repositories/prognosis-prediction-TCGA/RMDs/)"
+DATA_DIR = r"(C:/Users/aleja/Documents/github_repositories/prognosis-prediction-TCGA/data/raw/)"
+RESULT_DIR <- r"(C:/Users/aleja/Documents/github_repositories/prognosis-prediction-TCGA/results/)"
+PLOTS_DIR <- r"(C:\Users\aleja\Documents\github_repositories\prognosis-prediction-TCGA\plots\)"
+
+# %%%%%%%%%%%%%%
+# RAW DATA PATHS
+
+RAW_CLINICAL_PATIENT <- r"(C:/Users/aleja/Documents/github_repositories/prognosis-prediction-TCGA/data/data_clinical_patient.txt)"
+RAW_CLINICAL_SAMPLE <- r"(C:/Users/aleja/Documents/github_repositories/prognosis-prediction-TCGA/data/data_clinical_sample.txt)"
+RAW_GENOMIC <- r"(C:/Users/aleja/Documents/github_repositories/prognosis-prediction-TCGA/data/data_mrna_seq_v2_rsem.txt)"
+RAW_METHYLATION <- r"(C:/Users/aleja/Documents/github_repositories/prognosis-prediction-TCGA/data/data_methylation.txt)"
+RAW_MICROBIOME <- r"(C:/Users/aleja/Documents/github_repositories/prognosis-prediction-TCGA/data/data_microbiome.txt)"
+
+# %%%%%%%%%%%%%%%%%%%%%
+# STATISTICAL CONSTANTS
+
+P <- 0.05
+
+# %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+# MACHINE LEARNING CONFIGURATION PARAMETERS
+
+PERC <- 20
+FOLD <- 5
+SEED <- 3000
+NFEATURES <- 30
+DAYS <- 1825
+
+```
+
+# Libraries
+
+```{r}
+# %%%%%%%%%%%%%%%%%%%%%%%%%%
+# ##### LIBRARIES ##########
+
+# %%%%%%%%%%%%%%%%%%%%%
+# CRAN libraries ######
+libraries <- c("fairness", "dplyr", "CORElearn", "FSelector", "randomForest", "stringr", "caret", "splitTools", "MLmetrics", "ROCR", "glmnet", "kernlab", "mltools", "data.table", "AER", "tidyverse", "naniar", "gridExtra", "knitr", "rmarkdown", "markdown", "DataExplorer")
+
+# %%%%%%%%%%%%%%%%%%%%%%%%%%
+# Install CRAN libraries ###
+installed_libraries <- libraries %in% rownames(installed.packages())
+if (any(installed_libraries == FALSE)) {
+  install.packages(libraries[!installed_libraries], force=T)
+}
+
+# %%%%%%%%%%%%%%%%%%%%%%%%%%
+# Load CRAN libraries ###########
+invisible(lapply(libraries, library, character.only = TRUE))
+
+# %%%%%%%%%%%%%%%%%%%%%%%%%%
+# Install BiocManager #####
+if (!require("BiocManager", quietly = TRUE))
+  install.packages("BiocManager")
+
+# %%%%%%%%%%%%%%%%%%%%%%%%%%
+# BiocManager libraries ####
+bioc_libraries <- c("limma", "Biobase")
+
+# %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+# Install BiocManager libraries ####
+BiocManager::install(bioc_libraries, force = T)
+
+# %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+# Load BiocManager libraries ####
+invisible(lapply(bioc_libraries, library, character.only = TRUE))
+```
+
+# Functions
+
+```{r}
+# %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+# #### FUNCTIONS ###################
+
+# %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+# CREATE DIRECTORY ####
+
+#' Create a directory for project results
+#'
+#' @param data_dir The base data directory
+#' @param project_name The name of the project
+#' @param version The version code for the project
+#' @param date The current date
+#'
+#' @return The path to the created directory
+#'
+create_directory <- function(result_dir = RESULT_DIR,
+                                     project_name = SOFT_NAME,
+                             version = VERSION_CODE,
+                                     date = DATE) {
+  dir_path <- paste0(result_dir, project_name, version, "_results_", date, "/")
+  
+  if (file.exists(dir_path)) {
+    msg <- paste0("Directory '", dir_path, "' already existed. Check function's arguments")
+  } else if (dir.create(dir_path)) {
+    msg <- paste0("Directory '", dir_path, "' succesfully created.")
+  } else {
+    msg <- paste0("Directory ", dir_path ," cannot be created. Check function's arguments")
+    stop(msg, call.=FALSE)
+  } 
+  message(msg)
+  return(dir_path)
+}
+
+# %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+# CREATE DATA FIXED #############
+
+#' Keeps observations that match the time condition 
+#' 
+#' @description
+#' Selects observations for which there is information on the survival status at a fixed time instant, considering the relationship between survival status, follow-up time period, and the fixed time point.
+#'
+#' @param df_clinical A Clinical data frame object with the columns OS_STATUS and OS_MONTHS, and sample_id as row names.
+#' @param int_time An integer defining the fixed time instant in days.
+#'
+#' @return A data frame object. The output has the following characteristics:
+#' 
+#' * Observations that match the time condition.
+#' * Same columns as df_clinical with OS_STATUS and OS_MONTHS modified to the new time point.
+#' 
+#' @export
+#'
+#' @examples
+create_data_fixed <- function(df_clinical, int_time) {
+  tryCatch(
+    expr = {
+      # Check arguments
+      if (!is.numeric(int_time)) {
+        stop("Non-numeric time")
+      } else if (int_time < 0) {
+        stop("Non-positive time value")
+      } else if (!is.data.frame(df_clinical)) {
+        stop("Non-data frame object data")
+      } else if (any(!(c("OS_MONTHS", "OS_STATUS") %in% colnames(df_clinical)))) {
+        stop("Cannot find 'OS_MONTHS' or 'OS_STATUS' in column names")
+      } else {
+        ## Create a dataframe at the fixed time point
+        clinical_data_fixed <- df_clinical
+        
+        ## Observations with a study time less than or equal to 1825 days and have not suffered the event; there is no information on the status at the fixed time, and the observation is eliminated.
+        clinical_data_fixed <-
+          clinical_data_fixed[-c(
+            which(
+              clinical_data_fixed$OS_MONTHS <= int_time &
+                clinical_data_fixed$OS_STATUS == 0
+            )
+          ),]
+        
+        ## Observations with a study time of less than or equal to 1825 days and have suffered the event; retain this state at the fixed time.
+        clinical_data_fixed$OS_STATUS[which(clinical_data_fixed$OS_MONTHS <= int_time &
+                                              clinical_data_fixed$OS_STATUS == 1)] <- 1
+        
+        ## Observations with a study time greater than 1825 days and have suffered the event; they have not suffered it yet at the fixed date.
+        clinical_data_fixed$OS_STATUS[which(clinical_data_fixed$OS_MONTHS > int_time &
+                                              clinical_data_fixed$OS_STATUS == 1)] <- 0
+        
+        ## Observations with a study time greater than 1825 days and have not suffered the event; retain this state at the fixed int_time.
+        clinical_data_fixed$OS_STATUS[which(clinical_data_fixed$OS_MONTHS > int_time &
+                                              clinical_data_fixed$OS_STATUS == 0)] <- 0
+        
+        # Update the time of observations that exceed the set time
+        clinical_data_fixed$OS_MONTHS[which(clinical_data_fixed$OS_MONTHS > int_time)] <-
+          int_time
+        
+        ## Subset of the population followed up to a fixed time point
+        clinical_data_fixed <-
+          clinical_data_fixed[which(clinical_data_fixed$OS_MONTHS <= int_time),]
+        
+        return(clinical_data_fixed)
+      }
+    },
+    error = function(e) {
+      print(sprintf(
+        "An error occurred in create_data_fixed at %s : %s",
+        Sys.time(),
+        e
+      ))
+    }
+  )
+  
+}
+
+# %%%%%%%%%%%%%%%%%%%%%%%%%%
+# MATCH SAMPLES ############
+
+#' Select the intersection of observations in clinical and omic data frames.
+#'
+#' @param df_clinical Data frame: clinical data 
+#' @param list_omics_df List of omics data frames
+#'
+#' @return A list of data frames with the same order as the input parameters. The set of observations is the same in each returned data frame.
+#' @export
+#'
+#' @examples
+match_samples <- function(df_clinical, list_omics_df) {
+  tryCatch(
+    expr = {
+      # Check arguments
+      if (!is.data.frame(df_clinical)) {
+        error("Non-data frame type in 'df_clinical'")
+      } else if (!is.list(list_omics_df)) {
+        stop("Non-list type in 'list_omics_df'")
+      } else {
+        clinical_data <- df_clinical
+        df_list <- list_omics_df
+        dataframes_sample_ids <- list()
+        dim_samples <- c()
+        
+        # Obtain sample_ids and dimensions of each dataframe
+        for (i in 1:length(df_list)) {
+          dataframes_sample_ids <- append(dataframes_sample_ids, list(colnames(df_list[i][[1]])))
+          dim_samples <- append(dim_samples, length(colnames(df_list[i][[1]])))
+        }
+        
+        # Since clinical data has sample_id as row names, we process it individually
+        dataframes_sample_ids <- append(dataframes_sample_ids, list(row.names(clinical_data)))
+        dim_samples <- append(dim_samples, length(row.names(clinical_data)))
+        
+        # Minimum vector of sample_ids
+        samples_min <- dataframes_sample_ids[[which(dim_samples == min(dim_samples))[1]]]
+        
+        # Selecting from samples_min and all dataframes_samples_ids
+        for (i in 1:length(dataframes_sample_ids)) {
+          samples_min <- samples_min[which(samples_min %in% dataframes_sample_ids[i][[1]])]
+        }
+        
+        # Update sample IDs
+        for (i in 1:length(df_list)) {
+          df_list[i][[1]] <- df_list[i][[1]][, c(which(colnames(df_list[i][[1]]) %in% samples_min))]
+        }
+        
+        clinical_data <- clinical_data[c(which(row.names(clinical_data) %in% samples_min)), ]
+        
+        result <- list(clinical_data = clinical_data, omic_dfs = df_list)
+        
+        return(result)
+      }
+    },
+    error = function(e) {
+      print(sprintf("An error occurred in 'match_samples' at %s: %s",
+                    Sys.time(),
+                    e))
+    }
+  )
+}
+
+# %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+# DIFFERENTIAL EXPRESSION ##########
+
+#' Apply differential analysis to omics data frames
+#'
+#' @param df_clinical Data frame clinical_data derived of create_data_fixed
+#' @param dfs_omics List of omics data frames
+#' @param p_val Double type defining the P-value to be applied has filter and selecting the most representative variables
+#'
+#' @return A list of 3 lists. The characteristics of each list are the following:
+#' 
+#' * List 1 as ´diff_dfs´, store the omics data frames with the variables with p value < p_val
+#' * List 2 as ´diff_names´, store a vector per each omic data frame of omic variables names which have passed the p value filter
+#' * List 3 as ´top_table´, store a topTable element per each omic data frame with more information about it differential analysis 
+#' associated
+#' @export
+#'
+#' @examples
+diff_express <- function(df_clinical, dfs_omics, p_val) {
+  tryCatch(
+    expr = {
+      # Check arguments
+      if (!is.data.frame(df_clinical)) {
+        error("Non data.frame type in df_clinical")
+      } else if (!is.list(dfs_omics)) {
+        error("Non list type in df_clinical")
+      } else if (!is.double(p_val)) {
+        error("Non double type in p_val")
+      } else {
+        results <-
+          list(
+            diff_dfs = list(),
+            diff_names = list(),
+            top_table = list()
+          )
+        
+        for (i in 1:length(dfs_omics)) {
+          # Transform omics dataframes as data matrix
+          omics_matrix <- as.matrix(dfs_omics[i][[1]])
+          
+          # Expression set
+          express_set <- Biobase::ExpressionSet(log2(omics_matrix + 1))
+          
+          # Update patient data in expression set
+          Biobase::pData(express_set) <-
+            df_clinical[c(Biobase::sampleNames(express_set)), ]
+          
+          # Model matrix
+          mm <-
+            model.matrix(~ 0 + OS_STATUS, data = Biobase::pData(express_set))
+          
+          # lmFit
+          fit <- limma::lmFit(express_set, mm)
+          
+          # makeContrast
+          contrast <-
+            limma::makeContrasts(OS_STATUS0 - OS_STATUS1, levels = colnames(coef(fit)))
+          
+          # contrast.fit
+          contrast_fit <- limma::contrasts.fit(fit, contrast)
+          
+          # eBayes
+          bayes <- limma::eBayes(contrast_fit)
+          
+          # topTable
+          top_table <- limma::topTable(bayes, sort.by = "P", n = Inf, )
+          
+          # Filter topTable based on p value
+          diff_names <-
+            rownames(top_table[which(top_table$P.Value < p_val), ])
+          
+          # Update results
+          results$diff_dfs[i][[1]] <-
+            dfs_omics[i][[1]][c(diff_names), ]
+          results$diff_names[i][[1]] <- diff_names
+          results$top_table[i][[1]] <- top_table
+        }
+        
+        return(results)
+      }
+    },
+    error = function(e) {
+      print(sprintf("An error occurred in diff_express at %s : %s",
+                    Sys.time(),
+                    e))
+    }
+  )
+  
+}
+
+# %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+# INFORMATION GAIN FILTER #######
+
+#' Apply the information gain filter
+#'
+#' @param dataframe Data frame to which the filter is applied
+#' @param int_n_features Integer defining the number of most representative features to be selected in the returned data frame
+#'
+#' @return A list of objects. Each object has the following characteristics:
+#' 
+#' * Object 1: df_ig, storing a data frame with the set of most representative features defined by 'int_n_features' as row names and sample_ids as column names.
+#' * Object 2: result_ig, storing the information gain value associated with each variable in the original data frame 'dataframe'.
+# @export
+#'
+#' @examples
+informationGain_fs <- function(dataframe, int_n_features) {
+  tryCatch(
+    expr = {
+      # Check arguments
+      if (!is.data.frame(dataframe)) {
+        stop("Argument 'dataframe' must be a data frame")
+      } else if (!is.numeric(int_n_features)) {
+        stop("Argument 'int_n_features' must be an integer")
+      } else {
+        ig_coreLearn <-
+          attrEval(OS_STATUS == 1 ~ ., data = dataframe, estimator = "InfGain")
+        
+        df_result <-
+          dataframe[, names(ig_coreLearn[order(ig_coreLearn, decreasing = TRUE)[1:int_n_features]])]
+        df_result$OS_STATUS <- dataframe$OS_STATUS
+        
+        ig_return <-
+          data.frame(Columns = names(ig_coreLearn[order(ig_coreLearn, decreasing = TRUE)]), IG = ig_coreLearn[order(ig_coreLearn, decreasing = TRUE)])
+        
+        elements <- list(df_ig = df_result, result_ig = ig_return)
+        
+        return(elements)
+      }
+    },
+    error = function(e) {
+      print(sprintf("An error occurred in informationGain_fs at %s : %s",
+                    Sys.time(),
+                    e))
+    }
+  )
+}
+
+# %%%%%%%%%%%%%%%%%%%%%%%%%%%%
+# EARLY INTEGRATION ##########
+
+
+#' Apply early integration to a set of data frames
+#'
+#' @param list_dfs A list of data frames
+#'
+#' @return A data frame formed by concatenating variables from the datasets provided in 'list_dfs'.  
+#' 
+#' @export
+#'
+#' @examples
+early_integration <- function(list_dfs) {
+  tryCatch(
+    expr = {
+      # Check if list_dfs is a list of data frames
+      if (!is.list(list_dfs) || !all(sapply(list_dfs, is.data.frame))) {
+        stop("Argument 'list_dfs' must be a list of data frames")
+      } else {
+        dataframe <- list_dfs[[1]]
+        
+        for (i in 2:length(list_dfs)) {
+          dataframe <- cbind(dataframe, list_dfs[[i]])
+        }
+        
+        dataframe <- dataframe[!duplicated(as.list(dataframe))]
+        
+        return(dataframe)
+      }
+    },
+    error = function(e) {
+      print(sprintf("An error occurred in 'early_integration' at %s: %s",
+                    Sys.time(),
+                    e))
+    }
+  )
+}
+
+# %%%%%%%%%%%%%%%%%%%%%
+# TRAIN MODEL #########
+
+#' Training machine learning models applying hyperparameter grid search optimization
+#'
+#' @param char_model Character defining the model name
+#' @param param_exp_grid expand.grid() element defining the hyperparameter space search 
+#' @param df_data Data frame with the data 
+#' @param list_cv_index List of train data indexes
+#'
+#' @return A list of objects. The characteristics of each object are as follows:
+#' 
+#' * Object 1: 'df_results', stores a data frame with model evaluation and bias prediction detection metrics results for each fold.
+#' * Object 2: 'list_best_params', stores a list with the hyperparameters with the best results in each fold.
+#' @export
+#'
+#' @examples
+train_model <- function(char_model, param_exp_grid, df_data, list_cv_index) {
+  tryCatch(
+    expr = {
+      if (!is.character(char_model)) {
+        stop("Argument 'char_model' must be a character")
+      } else if (!is.data.frame(df_data)) {
+        stop("Argument 'df_data' must be a data frame")
+      } else if (!is.list(list_cv_index) || !all(sapply(list_cv_index, is.numeric))) {
+        stop("Argument 'list_cv_index' must be a list of numeric vectors")
+      }
+      
+      df_results <- data.frame(Model = character(), Fold = numeric(), ACC = numeric(), AUC = numeric(), F1_score = numeric(), PRO_S = numeric(), PRO_NS = numeric(), PROPP_S = numeric(), PROPP_NS = numeric(), SEN_S = numeric(), SEN_NS = numeric(), EO_S = numeric(), EO_NS = numeric(), PRE_S = numeric(), PRE_NS = numeric(), PRP_S = numeric(), PRP_NS = numeric(), ACC_S = numeric(), ACC_NS = numeric(), ACCP_S = numeric(), ACCP_NS = numeric(), FNR_S = numeric(), FNR_NS = numeric(), FNRP_S = numeric(), FNRP_NS = numeric(), FPR_S = numeric(), FPR_NS = numeric(), FPRP_S = numeric(), FPRP_NS = numeric(), GZ_S = numeric(), GZ_NS = numeric())
+      
+      list_best_params <- list()
+      
+      for (i in 1:length(list_cv_index)) {
+        training_data <- df_data[list_cv_index[[i]], ]
+        levels(training_data$OS_STATUS) <- make.names(levels(factor(training_data$OS_STATUS)))
+        test_data <- df_data[-list_cv_index[[i]], ]
+        levels(test_data$OS_STATUS) <- make.names(levels(factor(test_data$OS_STATUS)))
+        
+        set.seed(3000)
+        training_train_control <- trainControl(method = "cv", number = 2, search = "grid", classProbs = TRUE, summaryFunction = twoClassSummary)
+        
+        if (char_model == "svmLinear2") {
+          training_model <- train(OS_STATUS ~ ., data = training_data, method = "svmLinear2", trControl = training_train_control, tuneGrid = param_exp_grid, metric = "ROC")
+          
+          final_model <- train(OS_STATUS ~ ., data = training_data, method = "svmLinear2", trControl = trainControl(method = "none", classProbs = TRUE), tuneGrid = training_model$bestTune, metric = "ROC")
+        }
+        
+        if (char_model == "svmRadial") {
+          training_model <- train(OS_STATUS ~ ., data = training_data, method = "svmRadialSigma", trControl = training_train_control, tuneGrid = param_exp_grid, metric = "ROC")
+          
+          final_model <- train(OS_STATUS ~ ., data = training_data, method = "svmRadialSigma", trControl = trainControl(method = "none", classProbs = TRUE), tuneGrid = training_model$bestTune, metric = "ROC")
+        }
+        
+        if (char_model == "svmPoly") {
+          training_model <- train(OS_STATUS ~ ., data = training_data, method = "svmPoly", trControl = training_train_control, tuneGrid = param_exp_grid, metric = "ROC")
+          
+          final_model <- train(OS_STATUS ~ ., data = training_data, method = "svmPoly", trControl = trainControl(method = "none", classProbs = TRUE), tuneGrid = training_model$bestTune, metric = "ROC")
+        }
+        
+        test_predictions <- predict(final_model, test_data %>% select(-c("OS_STATUS")))
+        
+        cf_matrix_test <- confusionMatrix(test_predictions, test_data$OS_STATUS)
+        accuracy_test <- as.vector(cf_matrix_test$overall[1])
+        F1_test <- as.vector(cf_matrix_test$byClass[7])
+        
+        ## Binarize the outcome
+        test_predictions <- as.character(test_predictions)
+        test_predictions[test_predictions == "X0"] <- 0
+        test_predictions[test_predictions == "X1"] <- 1
+        test_data$OS_STATUS <- as.character(test_data$OS_STATUS)
+        test_data$OS_STATUS[test_data$OS_STATUS == "X0"] <- 0
+        test_data$OS_STATUS[test_data$OS_STATUS == "X1"] <- 1
+        
+        df_prediction <- data.frame(predictions = as.numeric(test_predictions), OS_STATUS = as.numeric(test_data$OS_STATUS), RACE = clinical_data_fixed$RACE[c(which(row.names(clinical_data_fixed) %in% row.names(test_data)))])
+        # data(df_prediction)
+        pred_AUC_test <- prediction(as.numeric(df_prediction$predictions), as.numeric(df_prediction$OS_STATUS))
+        perf_AUC_test <- performance(pred_AUC_test, "auc")
+        AUC_value_test <- perf_AUC_test@y.values[[1]]
+        
+        eq_odds <- equal_odds(
+          data = df_prediction,
+          outcome = "OS_STATUS",
+          group = "RACE",
+          preds = "predictions",
+          base = "Black or African American"
+        )
+        
+        eq_odds_sens_val <- eq_odds$Metric[1, 1]
+        eq_odds_sens_par_val <- eq_odds$Metric[2, 1]
+        eq_odds_nsens_val <- eq_odds$Metric[1, 2]
+        eq_odds_nsens_par_val <- eq_odds$Metric[2, 2]
+        
+        pred_rt_parity <- pred_rate_parity(
+          data = df_prediction,
+          outcome = "OS_STATUS",
+          group = "RACE",
+          preds = "predictions",
+          base = "Black or African American"
+        )
+        
+        pred_rt_sens_val <- pred_rt_parity$Metric[1, 1]
+        pred_rt_sens_par_val <- pred_rt_parity$Metric[2, 1]
+        pred_rt_nsens_val <- pred_rt_parity$Metric[1, 2]
+        pred_rt_nsens_par_val <- pred_rt_parity$Metric[2, 2]
+        
+        acc_par <- acc_parity(
+          data = df_prediction,
+          outcome = "OS_STATUS",
+          group = "RACE",
+          preds = "predictions",
+          base = "Black or African American"
+        )
+        
+        acc_sens_val <- acc_par$Metric[1, 1]
+        acc_sens_par_val <- acc_par$Metric[2, 1]
+        acc_nsens_val <- acc_par$Metric[1, 2]
+        acc_nsens_par_val <- acc_par$Metric[2, 2]
+        
+        fnr_par <- fnr_parity(
+          data = df_prediction,
+          outcome = "OS_STATUS",
+          group = "RACE",
+          preds = "predictions",
+          base = "Black or African American"
+        )
+        
+        fnr_sens_val <- fnr_par$Metric[1, 1]
+        fnr_sens_par_val <- fnr_par$Metric[2, 1]
+        fnr_nsens_val <- fnr_par$Metric[1, 2]
+        fnr_nsens_par_val <- fnr_par$Metric[2, 2]
+        
+        fpr_par <- fpr_parity(
+          data = df_prediction,
+          outcome = "OS_STATUS",
+          group = "RACE",
+          preds = "predictions",
+          base = "Black or African American"
+        )
+        
+        fpr_sens_val <- fpr_par$Metric[1, 1]
+        fpr_sens_par_val <- fpr_par$Metric[2, 1]
+        fpr_nsens_val <- fpr_par$Metric[1, 2]
+        fpr_nsens_par_val <- fpr_par$Metric[2, 2]
+        
+        res_prop <- prop_parity(
+          data = df_prediction,
+          outcome = "OS_STATUS",
+          group = "RACE",
+          preds = "predictions",
+          base = "Black or African American"
+        )
+        
+        res_prop_sens_val <- res_prop$Metric[1, 1]
+        res_prop_sens_par_val <- res_prop$Metric[2, 1]
+        res_prop_nsens_val <- res_prop$Metric[1, 2]
+        res_prop_nsens_par_val <- res_prop$Metric[2, 2]
+        
+        gz_s <- fpr_par$Metric[3, 1]
+        gz_ns <- fpr_par$Metric[3, 2]
+        
+        
+        df_results_add <- data.frame(
+          Model = as.character(char_model),
+          Fold = as.numeric(i),
+          ACC = as.numeric(accuracy_test),
+          AUC = as.numeric(AUC_value_test),
+          F1_score = as.numeric(F1_test),
+          PRO_S = as.numeric(res_prop_sens_val),
+          PRO_NS = as.numeric(res_prop_nsens_val),
+          PROPP_S = as.numeric(res_prop_sens_par_val),
+          PROPP_NS = as.numeric(res_prop_nsens_par_val),
+          SEN_S = as.numeric(eq_odds_sens_par_val),
+          SEN_NS = as.numeric(eq_odds_nsens_par_val),
+          EO_S = as.numeric(eq_odds_sens_par_val),
+          EO_NS = as.numeric(eq_odds_nsens_par_val),
+          PRE_S = as.numeric(pred_rt_sens_val),
+          PRE_NS = as.numeric(pred_rt_nsens_val),
+          PRP_S = as.numeric(pred_rt_sens_par_val),
+          PRP_NS = as.numeric(pred_rt_nsens_par_val),
+          ACC_S = as.numeric(acc_sens_val),
+          ACC_NS = as.numeric(acc_nsens_val),
+          ACCP_S = as.numeric(acc_sens_par_val),
+          ACCP_NS = as.numeric(acc_nsens_par_val),
+          FNR_S = as.numeric(fnr_sens_val),
+          FNR_NS = as.numeric(fnr_nsens_val),
+          FNRP_S = as.numeric(fnr_sens_par_val),
+          FNRP_NS = as.numeric(fnr_nsens_par_val),
+          FPR_S = as.numeric(fpr_sens_val),
+          FPR_NS = as.numeric(fpr_nsens_val),
+          FPRP_S = as.numeric(fpr_sens_par_val),
+          FPRP_NS = as.numeric(fpr_nsens_par_val),
+          GZ_S = as.numeric(gz_s),
+          GZ_NS = as.numeric(gz_ns)
+        )
+        
+        df_results <- rbind(df_results, df_results_add)
+        
+        list_best_params[i][[1]] <- training_model$bestTune
+      }
+      
+      df_results_add_final <- data.frame(
+        Model = as.character("Global"),
+        Fold = NA,
+        ACC = as.numeric(mean(df_results$ACC)),
+        AUC = as.numeric(mean(df_results$AUC)),
+        F1_score = as.numeric(mean(df_results$F1_score)),
+        PRO_S = as.numeric(mean(df_results$PRO_S)),
+        PRO_NS = as.numeric(mean(df_results$PRO_NS)),
+        PROPP_S = as.numeric(mean(df_results$PROPP_S)),
+        PROPP_NS = as.numeric(mean(df_results$PROPP_NS)),
+        SEN_S = as.numeric(mean(df_results$SEN_S)),
+        SEN_NS = as.numeric(mean(df_results$SEN_NS)),
+        EO_S = as.numeric(mean(df_results$EO_S)),
+        EO_NS = as.numeric(mean(df_results$EO_NS)),
+        PRE_S = as.numeric(mean(df_results$PRE_S)),
+        PRE_NS = as.numeric(mean(df_results$PRE_NS)),
+        PRP_S = as.numeric(mean(df_results$PRP_S)),
+        PRP_NS = as.numeric(mean(df_results$PRP_NS)),
+        ACC_S = as.numeric(mean(df_results$ACC_S)),
+        ACC_NS = as.numeric(mean(df_results$ACC_NS)),
+        ACCP_S = as.numeric(mean(df_results$ACCP_S)),
+        ACCP_NS = as.numeric(mean(df_results$ACCP_NS)),
+        FNR_S = as.numeric(mean(df_results$FNR_S)),
+        FNR_NS = as.numeric(mean(df_results$FNR_NS)),
+        FNRP_S = as.numeric(mean(df_results$FNRP_S)),
+        FNRP_NS = as.numeric(mean(df_results$FNRP_NS)),
+        FPR_S = as.numeric(mean(df_results$FPR_S)),
+        FPR_NS = as.numeric(mean(df_results$FPR_NS)),
+        FPRP_S = as.numeric(mean(df_results$FPRP_S)),
+        FPRP_NS = as.numeric(mean(df_results$FPRP_NS)),
+        GZ_S = NA,
+        GZ_NS = NA
+      )
+      
+      df_results <- rbind(df_results, df_results_add_final)
+      
+      results <- list(df_results = df_results, list_best_params = list_best_params)
+      
+      return(results)
+    },
+    error = function(e) {
+      print(sprintf("An error occurred in train_model at %s : %s",
+                    Sys.time(),
+                    e))
+    }
+  )
+}
+
+#' # %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+#' # READ LGBM RESULTS INTO A LIST ########
+#' 
+#' #' Read LGBM results from files into a list
+#' #'
+#' #' @param base_path The base path for LGBM result files
+#' #' @param num_files The number of LGBM result files to read
+#' #' @param file_format The file format of LGBM result files (default is "csv")
+#' #'
+#' #' @return A list of data frames containing LGBM results
+#' #' @export
+#' #'
+#' #' @examples
+#' read_lgbm_results <- function(base_path, num_files, file_format = "csv") {
+#'   tryCatch({
+#'     # Check if base_path is a character string
+#'     if (!is.character(base_path)) {
+#'       stop("Argument 'base_path' must be a character string")
+#'     }
+#'     
+#'     # Check if num_files is a numeric value
+#'     if (!is.numeric(num_files) || length(num_files) != 1 || num_files <= 0) {
+#'       stop("Argument 'num_files' must be a positive numeric value")
+#'     }
+#'     
+#'     # Check if file_format is a character string
+#'     if (!is.character(file_format) || !file_format %in% c("csv", "txt", "tsv")) {
+#'       stop("Argument 'file_format' must be one of 'csv', 'txt', or 'tsv'")
+#'     }
+#'     
+#'     # Function to read LGBM results given a base path and index
+#'     read_lgbm_file <- function(index) {
+#'       path <- paste0(base_path, "_", index, ".", file_format)
+#'       read.delim(path, header = TRUE, sep = ifelse(file_format == "csv", ",", "\t"), dec = ".", fill = TRUE)
+#'     }
+#'     
+#'     # Read LGBM results into a list
+#'     list_lgbm_results <- lapply(0:(num_files - 1), read_lgbm_file)
+#'     
+#'     return(list_lgbm_results)
+#'   }, error = function(e) {
+#'     message(sprintf("An error occurred in read_lgbm_results at %s : %s", Sys.time(), e))
+#'     return(NULL)
+#'   })
+#' }
+
+
+# %%%%%%%%%%%%%%%%%%%%%
+# BIAS LGBM ###########
+
+#' Bias prediction detection applied to Light Gradient Boosting Machine (LGBM) Python results
+#'
+#' @param list_lgbm_results A data frame storing predictions and ground truth performed by LGBM
+#' @param df_bias A data frame storing the sensible variable values (from clinical data fixed data frame)
+#'
+#' @return A data frame with model evaluation and bias prediction detection metrics results for each fold
+#' @export
+#'
+#' @examples
+bias_lgbm <- function(list_lgbm_results, df_bias) {
+  
+  tryCatch(
+    expr = {
+      if (!(all(sapply(list_lgbm_results, is.data.frame)))) {
+        stop("Argument 'list_lgbm_results' must be a data frames list")
+      } else {
+        
+        df_results <- data.frame(Model = as.character(), Fold = as.numeric(), PRO_S = as.numeric(), PRO_NS = as.numeric(), PROPP_S = as.numeric(), PROPP_NS = as.numeric(), SEN_S = as.numeric(), SEN_NS = as.numeric(), EO_S = as.numeric(), EO_NS = as.numeric(), PRE_S = as.numeric(), PRE_NS = as.numeric(), PRP_S = as.numeric(), PRP_NS = as.numeric(), ACC_S = as.numeric(), ACC_NS = as.numeric(), ACCP_S = as.numeric(), ACCP_NS = as.numeric(), FNR_S = as.numeric(), FNR_NS = as.numeric(), FNRP_S = as.numeric(), FNRP_NS = as.numeric(), FPR_S = as.numeric(), FPR_NS = as.numeric(), FPRP_S = as.numeric(), FPRP_NS = as.numeric(), GZ_S = as.numeric(), GZ_NS = as.numeric())
+        
+        
+        for (i in 1:length(list_lgbm_results)) {
+          list_lgbm_results[i][[1]] <- list_lgbm_results[i][[1]][c(which(list_lgbm_results[i][[1]]$X %in% row.names(df_bias))),]
+          
+          
+          list_lgbm_results[i][[1]]$predictions <- factor(list_lgbm_results[i][[1]]$predictions)
+          levels(list_lgbm_results[i][[1]]$predictions) <- list(X0 = 0, X1 = 1)
+          list_lgbm_results[i][[1]]$truth <- factor(list_lgbm_results[i][[1]]$truth)
+          levels(list_lgbm_results[i][[1]]$truth) <- list(X0 = 0, X1 = 1)
+          
+          df_prediction <- data.frame(predictions = list_lgbm_results[i][[1]]$predictions, OS_STATUS = list_lgbm_results[i][[1]]$truth, RACE = df_bias$RACE[c(which(row.names(df_bias) %in% list_lgbm_results[i][[1]]$X))])
+          
+          eq_odds <- equal_odds(
+            data = df_prediction,
+            outcome = "OS_STATUS",
+            group = "RACE",
+            preds = "predictions",
+            base = "Black or African American"
+          )
+          
+          eq_odds_sens_val <- eq_odds$Metric[1, 1]
+          eq_odds_sens_par_val <- eq_odds$Metric[2, 1]
+          eq_odds_nsens_val <- eq_odds$Metric[1, 2]
+          eq_odds_nsens_par_val <- eq_odds$Metric[2, 2]
+          
+          pred_rt_parity <- pred_rate_parity(
+            data = df_prediction,
+            outcome = "OS_STATUS",
+            group = "RACE",
+            preds = "predictions",
+            base = "Black or African American"
+          )
+          
+          pred_rt_sens_val <- pred_rt_parity$Metric[1, 1]
+          pred_rt_sens_par_val <- pred_rt_parity$Metric[2, 1]
+          pred_rt_nsens_val <- pred_rt_parity$Metric[1, 2]
+          pred_rt_nsens_par_val <- pred_rt_parity$Metric[2, 2]
+          
+          acc_par <- acc_parity(
+            data = df_prediction,
+            outcome = "OS_STATUS",
+            group = "RACE",
+            preds = "predictions",
+            base = "Black or African American"
+          )
+          
+          acc_sens_val <- acc_par$Metric[1, 1]
+          acc_sens_par_val <- acc_par$Metric[2, 1]
+          acc_nsens_val <- acc_par$Metric[1, 2]
+          acc_nsens_par_val <- acc_par$Metric[2, 2]
+          
+          fnr_par <- fnr_parity(
+            data = df_prediction,
+            outcome = "OS_STATUS",
+            group = "RACE",
+            preds = "predictions",
+            base = "Black or African American"
+          )
+          
+          fnr_sens_val <- fnr_par$Metric[1, 1]
+          fnr_sens_par_val <- fnr_par$Metric[2, 1]
+          fnr_nsens_val <- fnr_par$Metric[1, 2]
+          fnr_nsens_par_val <- fnr_par$Metric[2, 2]
+          
+          fpr_par <- fpr_parity(
+            data = df_prediction,
+            outcome = "OS_STATUS",
+            group = "RACE",
+            preds = "predictions",
+            base = "Black or African American"
+          )
+          
+          fpr_sens_val <- fpr_par$Metric[1, 1]
+          fpr_sens_par_val <- fpr_par$Metric[2, 1]
+          fpr_nsens_val <- fpr_par$Metric[1, 2]
+          fpr_nsens_par_val <- fpr_par$Metric[2, 2]
+          
+          res_prop <- prop_parity(
+            data = df_prediction,
+            outcome = "OS_STATUS",
+            group = "RACE",
+            preds = "predictions",
+            base = "Black or African American"
+          )
+          
+          res_prop_sens_val <- res_prop$Metric[1, 1]
+          res_prop_sens_par_val <- res_prop$Metric[2, 1]
+          res_prop_nsens_val <- res_prop$Metric[1, 2]
+          res_prop_nsens_par_val <- res_prop$Metric[2, 2]
+          
+          gz_s <- fpr_par$Metric[3, 1]
+          gz_ns <- fpr_par$Metric[3, 2]
+          
+          
+          df_results_add <- data.frame(
+            Model = "LGBM",
+            Fold = as.numeric(i),
+            PRO_S = as.numeric(res_prop_sens_val),
+            PRO_NS = as.numeric(res_prop_nsens_val),
+            PROPP_S = as.numeric(res_prop_sens_par_val),
+            PROPP_NS = as.numeric(res_prop_nsens_par_val),
+            SEN_S = as.numeric(eq_odds_sens_par_val),
+            SEN_NS = as.numeric(eq_odds_nsens_par_val),
+            EO_S = as.numeric(eq_odds_sens_par_val),
+            EO_NS = as.numeric(eq_odds_nsens_par_val),
+            PRE_S = as.numeric(pred_rt_sens_val),
+            PRE_NS = as.numeric(pred_rt_nsens_val),
+            PRP_S = as.numeric(pred_rt_sens_par_val),
+            PRP_NS = as.numeric(pred_rt_nsens_par_val),
+            ACC_S = as.numeric(acc_sens_val),
+            ACC_NS = as.numeric(acc_nsens_val),
+            ACCP_S = as.numeric(acc_sens_par_val),
+            ACCP_NS = as.numeric(acc_nsens_par_val),
+            FNR_S = as.numeric(fnr_sens_val),
+            FNR_NS = as.numeric(fnr_nsens_val),
+            FNRP_S = as.numeric(fnr_sens_par_val),
+            FNRP_NS = as.numeric(fnr_nsens_par_val),
+            FPR_S = as.numeric(fpr_sens_val),
+            FPR_NS = as.numeric(fpr_nsens_val),
+            FPRP_S = as.numeric(fpr_sens_par_val),
+            FPRP_NS = as.numeric(fpr_nsens_par_val),
+            GZ_S = as.numeric(gz_s),
+            GZ_NS = as.numeric(gz_ns)
+          )
+          
+          df_results <- rbind(df_results, df_results_add)
+        }
+        
+        # Result computations and return statement
+        
+        df_results_add_final <- data.frame(
+          Model = as.character("Global"),
+          Fold = NA,
+          PRO_S = as.numeric(mean(df_results$PRO_S)),
+          PRO_NS = as.numeric(mean(df_results$PRO_NS)),
+          PROPP_S = as.numeric(mean(df_results$PROPP_S)),
+          PROPP_NS = as.numeric(mean(df_results$PROPP_NS)),
+          SEN_S = as.numeric(mean(df_results$SEN_S)),
+          SEN_NS = as.numeric(mean(df_results$SEN_NS)),
+          EO_S = as.numeric(mean(df_results$EO_S)),
+          EO_NS = as.numeric(mean(df_results$EO_NS)),
+          PRE_S = as.numeric(mean(df_results$PRE_S)),
+          PRE_NS = as.numeric(mean(df_results$PRE_NS)),
+          PRP_S = as.numeric(mean(df_results$PRP_S)),
+          PRP_NS = as.numeric(mean(df_results$PRP_NS)),
+          ACC_S = as.numeric(mean(df_results$ACC_S)),
+          ACC_NS = as.numeric(mean(df_results$ACC_NS)),
+          ACCP_S = as.numeric(mean(df_results$ACCP_S)),
+          ACCP_NS = as.numeric(mean(df_results$ACCP_NS)),
+          FNR_S = as.numeric(mean(df_results$FNR_S)),
+          FNR_NS = as.numeric(mean(df_results$FNR_NS)),
+          FNRP_S = as.numeric(mean(df_results$FNRP_S)),
+          FNRP_NS = as.numeric(mean(df_results$FNRP_NS)),
+          FPR_S = as.numeric(mean(df_results$FPR_S)),
+          FPR_NS = as.numeric(mean(df_results$FPR_NS)),
+          FPRP_S = as.numeric(mean(df_results$FPRP_S)),
+          FPRP_NS = as.numeric(mean(df_results$FPRP_NS)),
+          GZ_S = NA,
+          GZ_NS = NA
+        )
+        
+        df_results <- rbind(df_results, df_results_add_final)
+        
+        return(df_results)
+      }
+    },
+    error = function(e) {
+      print(sprintf("An error occurred in bias_lgbm at %s : %s", Sys.time(), e))
+    }
+  )
+}
+
+# %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+# READ LGBM RESULTS INTO A LIST ########
+
+#' Read LGBM results from files into a list
+#'
+#' @param base_path The base path for LGBM result files
+#' @param num_files The number of LGBM result files to read
+#' @param file_format The file format ("csv", "txt", "tsv") of LGBM result files (default is "csv")
+#'
+#' @return A list of data frames containing LGBM results
+#' @export
+#'
+#' @examples
+read_lgbm_results <- function(base_path, num_files, file_format = "csv") {
+  tryCatch({
+    # Check if base_path is a character string
+    if (!is.character(base_path)) {
+      stop("Argument 'base_path' must be a character string")
+    }
+    
+    # Check if num_files is a numeric value
+    if (!is.numeric(num_files) || length(num_files) != 1 || num_files <= 0) {
+      stop("Argument 'num_files' must be a positive numeric value")
+    }
+    
+    # Check if file_format is a character string
+    if (!is.character(file_format) || !file_format %in% c("csv", "txt", "tsv")) {
+      stop("Argument 'file_format' must be one of 'csv', 'txt', or 'tsv'")
+    }
+    
+    # Construct the file path using the base path + "_" + index, and the file format
+    read_lgbm_file <- function(index) {
+      path <- paste0(base_path, "_", index, ".", file_format)
+      read.delim(path, header = TRUE, sep = ifelse(file_format == "csv", ",", "\t"), dec = ".", fill = TRUE)
+    }
+    
+    # Read LGBM results into a list
+    list_lgbm_results <- lapply(0:(num_files - 1), read_lgbm_file)
+    
+    return(list_lgbm_results)
+  }, error = function(e) {
+    message(sprintf("An error occurred in read_lgbm_results at %s : %s", Sys.time(), e))
+    return(NULL)
+  })
+}
+
+# %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+# TRANSLATE DATAEXPLORER COLUMNS NAMES ########
+
+#' Translate column names of a DataExplorer::introduce data frame to Spanish
+#'
+#' This function takes a DataExplorer::introduce data frame with specific column names and translates them to
+#' their equivalent names in Spanish, following a predefined mapping.
+#'
+#' Spanish output column names = "Filas", "Columnas", "Columnas Discretas", "Columnas Continuas", "Total Columnas Nulas", "NAs", "Observaciones Totales", "Filas Completas" 
+#'
+#' @param df_introduce The input DataExplorer::introduce data frame with original column names
+#'
+#' @return A data frame with column names translated to Spanish
+#'
+translate_introduce_columns <- function(df_introduce) {
+  
+  english_columns <- c("rows", "columns", "discrete_columns", "continuous_columns", "all_missing_columns", "total_missing_values", "complete_rows", "total_observations", "memory_usage")
+  
+  tryCatch({
+    if (!(all(english_columns %in% colnames(df_introduce)))) {
+      stop("Check input data frame. Not all the default DataExplorer::introduce data frame columns found.")
+    } else {
+      colnames(df_introduce)[which(names(df_introduce) == "rows")] <- "Filas"
+      colnames(df_introduce)[which(names(df_introduce) == "columns")] <- "Columnas"
+      colnames(df_introduce)[which(names(df_introduce) == "discrete_columns")] <- "Columnas Discretas"
+      colnames(df_introduce)[which(names(df_introduce) == "continuous_columns")] <- "Columnas Continuas"
+      colnames(df_introduce)[which(names(df_introduce) == "all_missing_columns")] <- "Total Columnas Nulas"
+      colnames(df_introduce)[which(names(df_introduce) == "total_missing_values")] <- "NAs"
+      colnames(df_introduce)[which(names(df_introduce) == "total_observations")] <- "Observaciones Totales"
+      colnames(df_introduce)[which(names(df_introduce) == "complete_rows")] <- "Filas Completas"
+      rm(english_columns)
+    }
+    
+    return(df_introduce)
+  }, error = function(e) {
+    message(sprintf("An error occurred in translate_introduce_columns at %s : %s", Sys.time(), e))
+    return(NULL)
+  })
+}
+```
+
+# Load
+
+
+```{r}
+# Load clinical sample data
+clinical_sample_data <- read.delim(RAW_CLINICAL_SAMPLE, header = FALSE, sep = "\t", dec = ".", fill = TRUE)
+
+# Load clinical data
+clinical_data <- read.delim(RAW_CLINICAL_PATIENT, header = FALSE, sep = "\t", dec = ".", fill = TRUE)
+
+# Load methylation data
+methylation_data <- read.table(RAW_METHYLATION, header = FALSE, sep = "\t", dec = ".", fill = TRUE)
+
+# Load genomic raw data
+genomic_data <- read.table(RAW_GENOMIC, header = FALSE, sep = "\t", dec = ".", fill = TRUE)
+
+# Load microbiome data
+microbiome_data <- read.table(RAW_MICROBIOME, header = FALSE, sep = "\t", dec = ".", fill = TRUE)
+
+# borrar constantes que ya no se necesitan
+rm(RAW_CLINICAL_SAMPLE, RAW_CLINICAL_PATIENT, RAW_METHYLATION, RAW_GENOMIC, RAW_MICROBIOME)
+```
+
+## Head Raw `clinical_data`
+
+```{r, echo=FALSE}
+rmarkdown::paged_table(head(clinical_sample_data), options = list(rows.print = 10, cols.print = 5))
+```
+
+## Head Raw `clinical_sample_data`
+
+```{r, echo=FALSE}
+rmarkdown::paged_table(head(clinical_data), options = list(rows.print = 10, cols.print = 5))
+```
+
+## Head Raw `genomic_data`
+
+```{r, echo=FALSE}
+rmarkdown::paged_table(head(genomic_data), options = list(rows.print = 10, cols.print = 5))
+```
+
+## Head Raw `methylation_data`
+
+```{r, echo=FALSE}
+rmarkdown::paged_table(head(methylation_data), options = list(rows.print = 10, cols.print = 5))
+```
+
+## Head Raw `microbiome_data`
+
+```{r, echo=FALSE}
+rmarkdown::paged_table(head(microbiome_data), options = list(rows.print = 10, cols.print = 5))
+```
+
+## Reformat data
+
+```{r}
+# Delete first four rows clinical sample data
+clinical_sample_data <- clinical_sample_data[-c(1:4), ]
+
+# Delete first four rows clinical data
+clinical_data <- clinical_data[-c(1:4), ]
+```
+
+
+## Define row and column names
+
+```{r}
+# Define col names clinical sample data
+colnames(clinical_sample_data) <- clinical_sample_data[1, ]
+clinical_sample_data <- clinical_sample_data[-1, ]
+
+# Define col names in clinical data
+colnames(clinical_data) <- clinical_data[1, ]
+clinical_data <- clinical_data[-1, ]
+
+# -----------------------
+
+# Define SAMPLE_ID
+clinical_data$SAMPLE_ID <- clinical_sample_data$SAMPLE_ID
+
+# Delete duplicate SAMPLE_ID
+clinical_data <- clinical_data[c(duplicated(clinical_data$SAMPLE_ID) == FALSE), ]
+
+# Define SAMPLE_ID as row names in clinical data
+row.names(clinical_data) <- clinical_data$SAMPLE_ID
+
+# -----------------------
+
+# Define col names in methylation data
+colnames(methylation_data) <- methylation_data[1, ]
+methylation_data <- methylation_data[-1, ]
+
+# Define ENTITY_STABLE_ID as row names in methylation data
+row.names(methylation_data) <- methylation_data$ENTITY_STABLE_ID
+methylation_data <- methylation_data[, -c(1)]
+
+# Delete duplicate rownames
+methylation_data <- methylation_data[unique(row.names(methylation_data)), ]
+
+# -----------------------
+
+# Define colnames genomic raw data
+colnames(genomic_data) <- genomic_data[1, ]
+genomic_data <- genomic_data[-1, ]
+
+# Subset where Hugo_Symbol is not na
+genomic_data <- subset(genomic_data, is.na(Hugo_Symbol) == FALSE)
+
+# Delete duplicate Hugo_Symbol
+genomic_data <- genomic_data[c(duplicated(genomic_data$Hugo_Symbol) == FALSE), ]
+
+# Define Hugo_Symbol as row names in genomic raw data
+row.names(genomic_data) <- genomic_data$Hugo_Symbol
+genomic_data <- genomic_data[, -c(1)]
+
+# -----------------------
+
+# Define col names in microbiome data
+colnames(microbiome_data) <- microbiome_data[1, ]
+microbiome_data <- microbiome_data[-1, ]
+
+# Subset where ENTITY_STABLE_ID is not na
+microbiome_data <- subset(microbiome_data, is.na(ENTITY_STABLE_ID) == FALSE)
+
+# Delete duplicate ENTITY_STABLE_ID
+microbiome_data <- microbiome_data[c(duplicated(microbiome_data$ENTITY_STABLE_ID) == FALSE), ]
+
+# Define ENTITY_STABLE_ID as data row names in microbiome data
+row.names(microbiome_data) <- microbiome_data$ENTITY_STABLE_ID
+
+# -----------------------
+
+# Order sample ids in alfabetical order
+clinical_data <- clinical_data[order(row.names(clinical_data)), ]
+genomic_data <- genomic_data %>% select(order(colnames(genomic_data)))
+methylation_data <- methylation_data %>% select(order(colnames(methylation_data)))
+microbiome_data <- microbiome_data %>% select(order(colnames(microbiome_data)))
+
+# -----------------------
+
+# Select variables subset
+
+# Subset clinical data variables
+clinical_col_selec <- c("RACE", "OS_STATUS", "OS_MONTHS")
+clinical_data <- clinical_data %>% select(clinical_col_selec)
+
+# Subset genomic raw data variables
+genomic_data <- genomic_data[, -c(1)]
+
+# Subset methylation data variables
+methylation_data <- methylation_data[, -c(1:4)]
+
+# Subset microbiome data variables
+microbiome_data <- microbiome_data[, -c(1:4)]
+
+rm(clinical_col_selec)
+```
+
+
+## Replace blank spaces with na's
+
+```{r}
+# Replace blank spaces with na's
+clinical_sample_data <- clinical_sample_data %>%
+  mutate(across(where(is.character), ~ na_if(., "")))
+clinical_data <- clinical_data %>%
+  mutate(across(where(is.character), ~ na_if(., "")))
+methylation_data <- methylation_data %>%
+  mutate(across(where(is.character), ~ na_if(., "")))
+genomic_data <- genomic_data %>%
+  mutate(across(where(is.character), ~ na_if(., "")))
+microbiome_data <- microbiome_data %>%
+  mutate(across(where(is.character), ~ na_if(., "")))
+```
+
+# Data Analysis
+
+## Summary Raw `clinical_data`
+
+```{r, echo=FALSE}
+summary_clinical_data <- translate_introduce_columns(introduce(clinical_data))
+columns_subset <- c("Filas", "Columnas", "Columnas Discretas", "Columnas Continuas", "Total Columnas Nulas", "NAs", "Observaciones Totales", "Filas Completas")
+rmarkdown::paged_table(summary_clinical_data[,columns_subset], options = list(rows.print = 15, cols.print = 5))
+```
+
+```{r, echo=FALSE}
+write.csv(summary_clinical_data[,columns_subset], file = paste0(PLOTS_DIR, "summary_clinical_data.csv"), row.names = FALSE)
+rm(summary_clinical_data, columns_subset)
+```
+
+## Summary Raw `clinical_sample_data`
+
+```{r, echo=FALSE}
+summary_clinical_sample_data <- translate_introduce_columns(introduce(clinical_sample_data))
+columns_subset <- c("Filas", "Columnas", "Columnas Discretas", "Columnas Continuas", "Total Columnas Nulas", "NAs", "Observaciones Totales", "Filas Completas")
+rmarkdown::paged_table(summary_clinical_sample_data[,columns_subset], options = list(rows.print = 15, cols.print = 5))
+```
+
+```{r, echo=FALSE}
+write.csv(summary_clinical_sample_data[,columns_subset], file = paste0(PLOTS_DIR, "summary_clinical_sample_data.csv"), row.names = FALSE)
+rm(summary_clinical_sample_data, columns_subset)
+```
+
+## Summary Raw `genomic_data`
+
+```{r, echo=FALSE}
+summary_genomic_data <- translate_introduce_columns(introduce(genomic_data))
+columns_subset <- c("Filas", "Columnas", "Columnas Discretas", "Columnas Continuas", "Total Columnas Nulas", "NAs", "Observaciones Totales", "Filas Completas")
+rmarkdown::paged_table(summary_genomic_data[,columns_subset], options = list(rows.print = 15, cols.print = 5))
+```
+
+```{r, echo=FALSE}
+write.csv(summary_genomic_data[,columns_subset], file = paste0(PLOTS_DIR, "summary_genomic_data.csv"), row.names = FALSE)
+rm(summary_genomic_data, columns_subset)
+```
+
+## Summary Raw `methylation_data`
+
+```{r, echo=FALSE}
+summary_methylation_data <- translate_introduce_columns(introduce(methylation_data))
+columns_subset <- c("Filas", "Columnas", "Columnas Discretas", "Columnas Continuas", "Total Columnas Nulas", "NAs", "Observaciones Totales", "Filas Completas")
+rmarkdown::paged_table(summary_methylation_data[,columns_subset], options = list(rows.print = 15, cols.print = 5))
+```
+
+```{r, echo=FALSE}
+write.csv(summary_methylation_data[,columns_subset], file = paste0(PLOTS_DIR, "summary_methylation_data.csv"), row.names = FALSE)
+rm(summary_methylation_data, columns_subset)
+```
+
+## Summary Raw `microbiome_data`
+
+```{r, echo=FALSE}
+summary_microbiome_data <- translate_introduce_columns(introduce(microbiome_data))
+columns_subset <- c("Filas", "Columnas", "Columnas Discretas", "Columnas Continuas", "Total Columnas Nulas", "NAs", "Observaciones Totales", "Filas Completas")
+rmarkdown::paged_table(summary_microbiome_data[,columns_subset], options = list(rows.print = 15, cols.print = 5))
+```
+
+```{r, echo=FALSE}
+write.csv(summary_microbiome_data[,columns_subset], file = paste0(PLOTS_DIR, "summary_microbiome_data.csv"), row.names = FALSE)
+rm(summary_microbiome_data, columns_subset)
+```
+
+## Null Values `clinical_data`
+
+```{r, echo=FALSE}
+null_clinical_data <- vis_miss(clinical_data[, c("RACE", "OS_STATUS", "OS_MONTHS")], show_perc = F)
+null_clinical_data <- null_clinical_data + labs(y="Observaciones") +  scale_fill_discrete(name = "NAs", labels = c("NAs", "Presente")) + scale_fill_grey()
+null_clinical_data
+```
+
+```{r, echo=FALSE, include=FALSE}
+jpeg(file = paste0(PLOTS_DIR, "clinical_data_plot1.jpeg"))
+null_clinical_data
+dev.off()
+
+rm(null_clinical_data)
+```
+
+
+## Null Values `clinical_data`: Race
+
+```{r, echo=FALSE}
+prop_race <- as.data.frame(table(clinical_data$RACE))[3:4, ] %>%
+  mutate(percent = Freq / sum(Freq))
+
+barplot(prop_race$percent,
+  main = "Porcentaje de valores nulos en la variable Race",
+  xlab = "Categorias", ylab = "Porcentaje",
+  names.arg = as.vector(prop_race$Var1))
+
+
+```
+
+```{r, echo=FALSE}
+jpeg(file = paste0(PLOTS_DIR, "clinical_data_plot2.jpeg"))
+barplot(prop_race$percent,
+  main = "Porcentaje de valores nulos en la variable Race",
+  xlab = "Categorias", ylab = "Porcentaje",
+  names.arg = as.vector(prop_race$Var1))
+dev.off()
+
+rm(prop_race)
+```
+
+## Observaciones de la variable RACE en `clinical data`
+
+```{r, echo=FALSE}
+barplot(as.numeric(base::table(clinical_data$RACE[clinical_data$RACE %in% c("White", "Black or African American")])),
+  main = "Observaciones de la variable RACE", ylim = c(0, 500),
+  xlab = "Subcategorias", ylab = "Observaciones",
+  names.arg = as.vector(names(table(clinical_data$RACE[clinical_data$RACE %in% c("White", "Black or African American")])))
+)
+```
+
+
+```{r, echo=FALSE}
+jpeg(file=paste0(PLOTS_DIR, "clinical_data_plot6.jpeg"))
+barplot(as.numeric(base::table(clinical_data$RACE[clinical_data$RACE %in% c("White", "Black or African American")])),
+  main = "Observaciones de la variable RACE", ylim = c(0, 500),
+  xlab = "Subcategorias", ylab = "Observaciones",
+  names.arg = as.vector(names(table(clinical_data$RACE[clinical_data$RACE %in% c("White", "Black or African American")])))
+)
+dev.off()
+```
+
+## Observaciones de la variable OS STATUS en `clinical data`
+
+```{r, echo=FALSE}
+barplot(as.numeric(base::table(clinical_data$OS_STATUS)),
+  main = "Observaciones de la variable OS STATUS", ylim = c(0, 500),
+  xlab = "Subcategorias", ylab = "Observaciones",
+  names.arg = as.vector(names(table(clinical_data$OS_STATUS)))
+)
+```
+
+
+```{r, echo=FALSE}
+jpeg(file=paste0(PLOTS_DIR, "clinical_data_plot3.jpeg"))
+barplot(as.numeric(base::table(clinical_data$OS_STATUS)),
+  main = "Observaciones de la variable OS STATUS", ylim = c(0, 500),
+  xlab = "Subcategorias", ylab = "Observaciones",
+  names.arg = as.vector(names(table(clinical_data$OS_STATUS)))
+)
+dev.off()
+```
+
+## OS STATUS donde RACE = Black or African American
+
+```{r, echo=FALSE}
+barplot(as.numeric(base::table(clinical_data$OS_STATUS[clinical_data$RACE == "Black or African American"])),
+  main = "OS STATUS donde RACE = Black or African American", ylim = c(0, 150),
+  xlab = "Subcategorias", ylab = "Observaciones",
+  names.arg = as.vector(names(table(clinical_data$OS_STATUS)))
+)
+```
+
+
+```{r, echo=FALSE}
+jpeg(file=paste0(PLOTS_DIR, "clinical_data_plot4.jpeg"))
+barplot(as.numeric(base::table(clinical_data$OS_STATUS[clinical_data$RACE == "Black or African American"])),
+  main = "OS STATUS donde RACE = Black or African American", ylim = c(0, 150),
+  xlab = "Subcategorias", ylab = "Observaciones",
+  names.arg = as.vector(names(table(clinical_data$OS_STATUS)))
+)
+dev.off()
+```
+
+## OS STATUS donde RACE = White
+
+```{r, echo=FALSE}
+barplot(as.numeric(base::table(clinical_data$OS_STATUS[clinical_data$RACE == "White"])),
+  main = "OS STATUS donde RACE = White", ylim = c(0, 500),
+  xlab = "Subcategorias", ylab = "Observaciones",
+  names.arg = as.vector(names(table(clinical_data$OS_STATUS)))
+)
+```
+
+```{r, echo=FALSE}
+jpeg(file=paste0(PLOTS_DIR, "clinical_data_plot5.jpeg"))
+barplot(as.numeric(base::table(clinical_data$OS_STATUS[clinical_data$RACE == "White"])),
+  main = "OS STATUS donde RACE = White", ylim = c(0, 500),
+  xlab = "Subcategorias", ylab = "Observaciones",
+  names.arg = as.vector(names(table(clinical_data$OS_STATUS)))
+)
+dev.off()
+```
+
+## Null Values `clinical_sample_data`
+
+```{r, echo=FALSE}
+vis_miss(clinical_sample_data[, c("PATIENT_ID", "SAMPLE_ID")], show_perc = F)
+```
+
+```{r, echo=FALSE}
+jpeg(file = paste0(PLOTS_DIR, "clinical_sample_data_plot1.jpeg"))
+vis_miss(clinical_sample_data[, c("PATIENT_ID", "SAMPLE_ID")], show_perc = F)
+dev.off()
+```
+
+## Null Values `methylation_data`
+
+```{r, echo=FALSE}
+hist(as.integer(sapply(methylation_data, function(x) sum(is.na(x)))), breaks = "Freedman-Diaconis", main = "NAs en Methylation data ", ylim = c(0, 300), xlim = range(-1, 20, 1), freq = T, include.lowest = TRUE, xlab = "Valores NAs", ylab = "Nº Observaciones")
+```
+
+```{r, echo=FALSE}
+jpeg(file = paste0(PLOTS_DIR, "methylation_data_plot1.jpeg"))
+hist(as.integer(sapply(methylation_data, function(x) sum(is.na(x)))), breaks = 40, main = "NAs en methylation data ", ylim = c(0, 600), xlab = "Valores NAs", ylab = "Nº Observaciones")
+dev.off()
+```
+
+## Table Null Values `methylation_data`
+
+```{r, echo=FALSE}
+df_null_methylation <- as.data.frame(miss_case_table(as.data.frame(t(methylation_data))))
+df_null_methylation <- setNames(df_null_methylation, c("Número de Nulos por Observación", "Número de Observaciones", "Porcentaje de Observaciones"))
+df_null_methylation <- df_null_methylation[order(df_null_methylation$`Porcentaje de Observaciones`, decreasing = TRUE), ]
+grid.table(df_null_methylation[0:15, ], rows = c(1:15))
+```
+
+```{r, echo=FALSE}
+write.csv(df_null_methylation[0:15, ], file = paste0(PLOTS_DIR, "methylation_data_table1.csv"), row.names = FALSE)
+
+rm(df_null_methylation)
+```
+
+```{r, echo=FALSE, eval=FALSE}
+png(paste0(PLOTS_DIR, "methylation_data_table1.png"))
+grid.table(df_null_methylation[0:15, ], rows = c(1:15))
+dev.off()
+```
+
+## Null Values `genomic_data`
+
+```{r, echo=FALSE}
+hist(as.integer(sapply(genomic_data, function(x) sum(is.na(x)))), breaks = 40, main = "NAs en genomic raw data ", ylim = c(0, 600), xlab = "Valores NAs", ylab = "Nº Observaciones")
+```
+
+```{r, echo=FALSE}
+jpeg(file = paste0(PLOTS_DIR, "genomic_data_plot1.jpeg"))
+hist(as.integer(sapply(genomic_data, function(x) sum(is.na(x)))), breaks = 40, main = "NAs en genomic raw data ", ylim = c(0, 600), xlab = "Valores NAs", ylab = "Nº Observaciones")
+dev.off()
+```
+
+# Preprocessing
+
+
+## Null values imputation: `clinical_data`
+
+```{r}
+#### Clinical data imputation
+
+# Delete rows with null values in RACE variable
+clinical_data <- clinical_data[is.na(clinical_data$RACE) == FALSE, ]
+
+# Delete rows with null values in OS_STATUS variable
+clinical_data <- clinical_data[is.na(clinical_data$OS_STATUS) == FALSE, ]
+
+# Delete rows with null values in OS_MONTHS variable
+clinical_data <- clinical_data[is.na(clinical_data$OS_MONTHS) == FALSE, ]
+```
+
+
+## Null Values Imputation: `genomic_data`
+
+```{r}
+#### Genomic raw data imputation
+
+# Delete variables with na in more than 20% of the samples
+perc <- PERC
+col_perc <- perc * ncol(genomic_data) / 100
+genomic_data <- genomic_data[rowSums(is.na(genomic_data)) < col_perc, ]
+
+#### Microbiome data imputation
+
+# Delete variables
+perc <- PERC
+col_perc <- perc * ncol(microbiome_data) / 100
+microbiome_data <- microbiome_data[rowSums(is.na(microbiome_data)) < col_perc, ]
+
+#### Methylation data imputation
+
+# Delete variables with na values
+methylation_data <- methylation_data[rowSums(is.na(methylation_data)) < 1, ]
+
+
+rm(perc, col_perc)
+```
+
+## Duplicate Variables
+
+```{r}
+#### Genomic raw data
+
+# Delete duplicate genes
+genomic_data <- genomic_data[c(unique(row.names(genomic_data))), ]
+
+#### Methylation data
+
+# Delete duplicate CpGs
+methylation_data <- methylation_data[c(unique(row.names(methylation_data))), ]
+
+#### Microbiome data
+
+# Delete duplicate microbiome variables
+microbiome_data <- microbiome_data[c(unique(row.names(microbiome_data))), ]
+```
+
+## Type Transformations
+
+```{r}
+# Genomic raw data
+
+# Transform all character variables to numeric
+genomic_data[, 1:ncol(genomic_data)] <- genomic_data[, 1:ncol(genomic_data)] %>% mutate_if(is.character, as.numeric)
+
+# Methylation data
+
+# Transform all character variables to numeric
+methylation_data[, 1:ncol(methylation_data)] <- methylation_data[, 1:ncol(methylation_data)] %>% mutate_if(is.character, as.numeric)
+
+# Microbiome data
+
+# Transform all character variables to numeric
+microbiome_data[, 1:ncol(microbiome_data)] <- microbiome_data[, 1:ncol(microbiome_data)] %>% mutate_if(is.character, as.numeric)
+
+# Clinical data
+
+# Transform OS_Months to numeric
+clinical_data$OS_MONTHS <- as.numeric(clinical_data$OS_MONTHS)
+## Transform months to days
+clinical_data$OS_MONTHS <- clinical_data$OS_MONTHS * 30.5
+## Transform OS_STATUS to factor
+clinical_data[clinical_data$OS_STATUS == "0:LIVING", "OS_STATUS"] <- 0
+clinical_data[clinical_data$OS_STATUS == "1:DECEASED", "OS_STATUS"] <- 1
+
+## Delete RACE == "Asian" and RACE == "American Indian or Alaska Native" - Not enough observations
+clinical_data <- clinical_data[clinical_data$RACE != "Asian", ]
+clinical_data <- clinical_data[clinical_data$RACE != "American Indian or Alaska Native", ]
+```
+
+## Preprocessing Analysis
+
+## Summary `clinical_data`
+
+```{r, echo=FALSE}
+summary_clinical_data_preprocessing <- translate_introduce_columns(introduce(clinical_data))
+columns_subset <- c("Filas", "Columnas", "Columnas Discretas", "Columnas Continuas", "Total Columnas Nulas", "NAs", "Observaciones Totales", "Filas Completas")
+rmarkdown::paged_table(summary_clinical_data_preprocessing[,columns_subset], options = list(rows.print = 15, cols.print = 5))
+```
+
+```{r, echo=FALSE}
+write.csv(summary_clinical_data_preprocessing[,columns_subset], file = paste0(PLOTS_DIR, "summary_clinical_data_preprocessing.csv"), row.names = FALSE)
+rm(summary_clinical_data_preprocessing, columns_subset)
+```
+
+## Summary `genomic_data`
+
+```{r, echo=FALSE}
+summary_genomic_data_preprocessing <- translate_introduce_columns(introduce(genomic_data))
+columns_subset <- c("Filas", "Columnas", "Columnas Discretas", "Columnas Continuas", "Total Columnas Nulas", "NAs", "Observaciones Totales", "Filas Completas")
+rmarkdown::paged_table(summary_genomic_data_preprocessing[,columns_subset], options = list(rows.print = 15, cols.print = 5))
+```
+
+```{r, echo=FALSE}
+write.csv(summary_genomic_data_preprocessing[,columns_subset], file = paste0(PLOTS_DIR, "summary_genomic_data_preprocessing.csv"), row.names = FALSE)
+rm(summary_genomic_data_preprocessing, columns_subset)
+```
+
+## Summary `methylation_data`
+
+```{r, echo=FALSE}
+summary_methylation_data_preprocessing <- translate_introduce_columns(introduce(methylation_data))
+columns_subset <- c("Filas", "Columnas", "Columnas Discretas", "Columnas Continuas", "Total Columnas Nulas", "NAs", "Observaciones Totales", "Filas Completas")
+rmarkdown::paged_table(summary_methylation_data_preprocessing[,columns_subset], options = list(rows.print = 15, cols.print = 5))
+```
+
+```{r, echo=FALSE}
+write.csv(summary_methylation_data_preprocessing[,columns_subset], file = paste0(PLOTS_DIR, "summary_methylation_data_preprocessing.csv"), row.names = FALSE)
+rm(summary_methylation_data_preprocessing, columns_subset)
+```
+
+## Summary `microbiome_data`
+
+```{r, echo=FALSE}
+summary_microbiome_data_preprocessing <- translate_introduce_columns(introduce(microbiome_data))
+columns_subset <- c("Filas", "Columnas", "Columnas Discretas", "Columnas Continuas", "Total Columnas Nulas", "NAs", "Observaciones Totales", "Filas Completas")
+rmarkdown::paged_table(summary_microbiome_data_preprocessing[,columns_subset], options = list(rows.print = 15, cols.print = 5))
+```
+
+```{r, echo=FALSE}
+write.csv(summary_microbiome_data_preprocessing[,columns_subset], file = paste0(PLOTS_DIR, "summary_microbiome_data_preprocessing.csv"), row.names = FALSE)
+rm(summary_microbiome_data_preprocessing, columns_subset)
+```
+
+# Data Fixed
+
+## Create Clinical Data Frame at Fixed Date Point: 5 years (1825 days)
+
+```{r}
+clinical_data_fixed <- create_data_fixed(clinical_data, DAYS)
+```
+
+## `clinical_data_fixed` Analysis
+
+## Observaciones de la variable RACE
+
+```{r, echo=FALSE}
+barplot(as.numeric(base::table(clinical_data_fixed$RACE)),
+  main = "Observaciones de la variable RACE", ylim = c(0, 120),
+  xlab = "Subcategorias", ylab = "Observaciones",
+  names.arg = as.vector(names(base::table(clinical_data_fixed$RACE)))
+)
+```
+
+```{r, echo=FALSE}
+jpeg(file=paste0(PLOTS_DIR, "clinical_data_fixed_plot1.jpeg"))
+barplot(as.numeric(base::table(clinical_data_fixed$RACE)),
+  main = "Observaciones de la variable RACE", ylim = c(0, 120),
+  xlab = "Subcategorias", ylab = "Observaciones",
+  names.arg = as.vector(names(base::table(clinical_data_fixed$RACE)))
+)
+dev.off()
+```
+
+## Observaciones de la variable OS STATUS
+
+```{r, echo=FALSE}
+barplot(as.numeric(base::table(clinical_data_fixed$OS_STATUS)),
+  main = "Observaciones de la variable OS STATUS", ylim = c(0, 120),
+  xlab = "Subcategorias", ylab = "Observaciones",
+  names.arg = as.vector(names(table(clinical_data_fixed$OS_STATUS)))
+)
+```
+
+
+```{r, echo=FALSE}
+jpeg(file=paste0(PLOTS_DIR, "clinical_data_fixed_plot2.jpeg"))
+barplot(as.numeric(base::table(clinical_data_fixed$OS_STATUS)),
+  main = "Observaciones de la variable OS STATUS", ylim = c(0, 120),
+  xlab = "Subcategorias", ylab = "Observaciones",
+  names.arg = as.vector(names(table(clinical_data_fixed$OS_STATUS)))
+)
+dev.off()
+```
+
+## OS STATUS donde RACE = White
+
+```{r, echo=FALSE}
+barplot(as.numeric(base::table(clinical_data_fixed$OS_STATUS[clinical_data_fixed$RACE == "White"])),
+  main = "OS STATUS donde RACE = White", ylim = c(0, 150),
+  xlab = "Subcategorias", ylab = "Observaciones",
+  names.arg = as.vector(names(table(clinical_data_fixed$OS_STATUS)))
+)
+```
+
+
+```{r, echo=FALSE}
+jpeg(file=paste0(PLOTS_DIR, "clinical_data_fixed_plot3.jpeg"))
+barplot(as.numeric(base::table(clinical_data_fixed$OS_STATUS[clinical_data_fixed$RACE == "White"])),
+  main = "OS STATUS donde RACE = White", ylim = c(0, 150),
+  xlab = "Subcategorias", ylab = "Observaciones",
+  names.arg = as.vector(names(table(clinical_data_fixed$OS_STATUS)))
+)
+dev.off()
+```
+
+## OS STATUS donde RACE = Black or African American
+
+```{r, echo=FALSE}
+barplot(as.numeric(base::table(clinical_data_fixed$OS_STATUS[clinical_data_fixed$RACE == "Black or African American"])),
+  main = "OS STATUS donde RACE = Black or African American", ylim = c(0, 80),
+  xlab = "Subcategorias", ylab = "Observaciones",
+  names.arg = as.vector(names(table(clinical_data_fixed$OS_STATUS)))
+)
+```
+
+```{r, echo=FALSE}
+jpeg(file=paste0(PLOTS_DIR, "clinical_data_fixed_plot4.jpeg"))
+barplot(as.numeric(base::table(clinical_data_fixed$OS_STATUS[clinical_data_fixed$RACE == "Black or African American"])),
+  main = "OS STATUS donde RACE = Black or African American", ylim = c(0, 80),
+  xlab = "Subcategorias", ylab = "Observaciones",
+  names.arg = as.vector(names(table(clinical_data_fixed$OS_STATUS)))
+)
+dev.off()
+```
+
+## Summary `clinical_data_fixed`
+
+```{r, echo=FALSE}
+summary_clinical_data_fixed <- translate_introduce_columns(introduce(clinical_data_fixed))
+columns_subset <- c("Filas", "Columnas", "Columnas Discretas", "Columnas Continuas", "NAs")
+rmarkdown::paged_table(summary_clinical_data_fixed[,columns_subset], options = list(rows.print = 15, cols.print = 5))
+```
+
+```{r, echo=FALSE}
+write.csv(summary_clinical_data_fixed[,columns_subset], file = paste0(PLOTS_DIR, "summary_clinical_data_fixed.csv"), row.names = FALSE)
+rm(summary_clinical_data_fixed, columns_subset)
+```
+
+## Update Matching Samples ids in All Data Frames
+
+```{r}
+omic_dfs <- list(genomic_data, methylation_data, microbiome_data)
+matched_df <- match_samples(clinical_data_fixed, omic_dfs)
+
+clinical_data_fixed <- matched_df$clinical_data
+genomic_data <- matched_df$omic_dfs[1][[1]]
+methylation_data <- matched_df$omic_dfs[2][[1]]
+microbiome_data <- matched_df$omic_dfs[3][[1]]
+
+rm(omic_dfs, matched_df)
+```
+
+# Feature Selection
+
+## Feature Selection: Differential expression
+
+```{r}
+omic_dfs <- list(genomic_data, methylation_data, microbiome_data)
+diff_dfs <- diff_express(clinical_data_fixed, dfs_omics = omic_dfs, p_val = P)
+df_diff_gen <- as.data.frame(t(diff_dfs$diff_dfs[1][[1]]))
+df_diff_meth <- as.data.frame(t(diff_dfs$diff_dfs[2][[1]]))
+df_diff_micro <- as.data.frame(t(diff_dfs$diff_dfs[3][[1]]))
+
+rm(omic_dfs)
+```
+
+## Data Analysis Differential Expression
+
+```{r}
+diff_pval_geno <- diff_dfs$top_table[1][[1]] %>% select(c("P.Value"))
+diff_pval_meth <- diff_dfs$top_table[2][[1]] %>% select(c("P.Value"))
+diff_pval_micro <- diff_dfs$top_table[3][[1]] %>% select(c("P.Value"))
+
+rm(diff_dfs)
+```
+
+## Data Analysis Differential Expression: `genomic_data`
+
+```{r, echo=FALSE}
+diff_pval_geno[1:10, , drop = F]
+```
+
+```{r, echo=FALSE}
+write.csv(diff_pval_geno[1:10, , drop = F], file = paste0(PLOTS_DIR, "diff_pval_geno.csv"), row.names = TRUE)
+```
+
+
+## Data Analysis Differential Expression: `methylation_data`
+
+```{r, echo=FALSE}
+diff_pval_meth[1:10, , drop = F]
+```
+
+```{r, echo=FALSE}
+write.csv(diff_pval_meth[1:10, , drop = F], file = paste0(PLOTS_DIR, "diff_pval_meth.csv"), row.names = TRUE)
+```
+
+## Data Analysis Differential Expression: `microbiome_data`
+
+```{r, echo=FALSE}
+diff_pval_micro[1:10, , drop = F]
+```
+
+```{r, echo=FALSE}
+write.csv(diff_pval_micro[1:10, , drop = F], file = paste0(PLOTS_DIR, "diff_pval_micro.csv"), row.names = TRUE)
+
+rm(diff_pval_geno, diff_pval_meth, diff_pval_micro)
+```
+
+```{r, echo=FALSE}
+## Add OS_STATUS variable to df_diff omic dataframes
+df_diff_gen$OS_STATUS <- clinical_data_fixed$OS_STATUS
+df_diff_meth$OS_STATUS <- clinical_data_fixed$OS_STATUS
+df_diff_micro$OS_STATUS <- clinical_data_fixed$OS_STATUS
+```
+
+## Create `df_diff` Omic Dataframes + RACE variable
+
+```{r}
+df_diffRace_gen <- df_diff_gen
+df_diffRace_meth <- df_diff_meth
+df_diffRace_micro <- df_diff_micro
+
+data_race <- as.data.frame(clinical_data_fixed$RACE, row.names = row.names(clinical_data_fixed))
+data_race$`clinical_data_fixed$RACE` <- as.factor(data_race$`clinical_data_fixed$RACE`)
+
+# One hot encoding
+oh_race <- one_hot(as.data.table(data_race))
+oh_race <- as.data.frame(oh_race, row.names = row.names(clinical_data_fixed))
+
+df_diffRace_gen <- cbind(df_diffRace_gen, oh_race)
+df_diffRace_meth <- cbind(df_diffRace_meth, oh_race)
+df_diffRace_micro <- cbind(df_diffRace_micro, oh_race)
+```
+
+
+## Feature Selection: Information Gain Filter (30 features most relevant per omic data frame)
+
+```{r}
+df_ig_gen <- informationGain_fs(df_diff_gen, NFEATURES)$df_ig
+df_ig_meth <- informationGain_fs(df_diff_meth, NFEATURES)$df_ig
+df_ig_micro <- informationGain_fs(df_diff_micro, NFEATURES)$df_ig
+```
+
+
+```{r, echo=FALSE}
+result_ig_gen <- informationGain_fs(df_diff_gen, NFEATURES)$result_ig
+result_ig_meth <- informationGain_fs(df_diff_meth, NFEATURES)$result_ig
+result_ig_micro <- informationGain_fs(df_diff_micro, NFEATURES)$result_ig
+
+write.csv(result_ig_gen[1:10, , drop = F], file = paste0(PLOTS_DIR, "result_ig_gen.csv"), row.names = TRUE)
+write.csv(result_ig_meth[1:10, , drop = F], file = paste0(PLOTS_DIR, "result_ig_meth.csv"), row.names = TRUE)
+write.csv(result_ig_micro[1:10, , drop = F], file = paste0(PLOTS_DIR, "result_ig_micro.csv"), row.names = TRUE)
+
+rm(result_ig_gen, result_ig_meth, result_ig_micro)
+```
+
+
+
+## Feature Selection: Information Gain Filter (30 features most relevant per omic + RACE variable data frame)
+
+```{r}
+df_ig_genRace <- informationGain_fs(df_diffRace_gen, NFEATURES)$df_ig
+df_ig_methRace <- informationGain_fs(df_diffRace_meth, NFEATURES)$df_ig
+df_ig_microRace <- informationGain_fs(df_diffRace_micro, NFEATURES)$df_ig
+```
+
+```{r, echo=FALSE}
+result_ig_genRace <- informationGain_fs(df_diffRace_gen, NFEATURES)$result_ig
+result_ig_methRace <- informationGain_fs(df_diffRace_meth, NFEATURES)$result_ig
+result_ig_microRace <- informationGain_fs(df_diffRace_micro, NFEATURES)$result_ig
+
+write.csv(result_ig_genRace[1:10, , drop = F], file = paste0(PLOTS_DIR, "result_ig_genRace.csv"), row.names = TRUE)
+write.csv(result_ig_methRace[1:10, , drop = F], file = paste0(PLOTS_DIR, "result_ig_methRace.csv"), row.names = TRUE)
+write.csv(result_ig_microRace[1:10, , drop = F], file = paste0(PLOTS_DIR, "result_ig_microRace.csv"), row.names = TRUE)
+
+rm(df_diffRace_gen, df_diffRace_meth, df_diffRace_micro, df_diff_gen, df_diff_meth, df_diff_micro, result_ig_genRace, result_ig_methRace, result_ig_microRace)
+```
+
+## Data Analysis Information Gain Filter: Genomic Data
+
+```{r, echo=FALSE}
+print(colnames(df_ig_gen))
+```
+
+## Data Analysis Information Gain Filter: Genomic Data + Race
+
+```{r, echo=FALSE}
+print(colnames(df_ig_genRace))
+```
+
+## Data Analysis Information Gain Filter: Methylation Data
+
+```{r, echo=FALSE}
+print(colnames(df_ig_meth))
+```
+
+## Data Analysis Information Gain Filter: Methylation Data + Race
+
+```{r, echo=FALSE}
+print(colnames(df_ig_methRace))
+```
+
+## Data Analysis Information Gain Filter: Microbiome Data
+
+```{r, echo=FALSE}
+print(colnames(df_ig_micro))
+```
+
+## Data Analysis Information Gain Filter: Microbiome Data + Race
+
+```{r, echo=FALSE}
+print(colnames(df_ig_microRace))
+
+rm(df_ig_microRace, df_ig_methRace, df_ig_genRace)
+```
+
+# Training
+
+## Training SVM Models
+
+```{r, warning=FALSE, message=FALSE}
+folds <- FOLD
+set.seed(SEED)
+cv_index1 <- createFolds(eIntegration_df$OS_STATUS, folds, returnTrain = TRUE, list = TRUE)
+
+model <- "svmLinear2"
+
+# svmLinear2
+param_grid_linear2 <- expand.grid(cost = c(0.01, 0.015, 0.1, 0.5, 1, 5, 10, 50, 100))
+
+linear_result_CV1 <- train_model(model, param_grid_linear2, eIntegration_df, cv_index1)
+
+linear_result_Race_CV1 <- train_model(model, param_grid_linear2, eIntegration_df_Race, cv_index1)
+
+model <- "svmRadial"
+
+# svmRadial
+param_grid_radial <- expand.grid(
+  sigma = c(0.001, 0.0015, 0.01, 0.015, 0.1, 0.5, 1, 5, 10, 50, 100),
+  C = c(0.001, 0.0015, 0.01, 0.015, 0.1, 0.5, 1, 5, 10, 50, 100)
+)
+radial_result_CV1 <- train_model(model, param_grid_radial, eIntegration_df, cv_index1)
+
+radial_result_Race_CV1 <- train_model(model, param_grid_radial, eIntegration_df_Race, cv_index1)
+
+model <- "svmPoly"
+
+# svmPoly
+param_grid_poly <- expand.grid(
+  degree = c(1, 2, 3),
+  C = c(0.001, 0.0015, 0.01, 0.015, 0.1, 0.5, 1, 5, 10, 50, 100),
+  scale = c(1)
+)
+poly_result_CV1 <- train_model(model, param_grid_poly, eIntegration_df, cv_index1)
+
+poly_result_Race_CV1 <- train_model(model, param_grid_poly, eIntegration_df_Race, cv_index1)
+```
+
+```{r, eval=FALSE, echo=FALSE}
+df_total_SVM_cv1 <- rbind(linear_result_CV1$df_results, radial_result_CV1$df_results)
+df_total_SVM_cv1 <- rbind(df_total_SVM_cv1, poly_result_CV1$df_results)
+
+df_total_SVM_cv1_race <- rbind(linear_result_Race_CV1$df_results, radial_result_Race_CV1$df_results)
+df_total_SVM_cv1_race <- rbind(df_total_SVM_cv1_race, poly_result_Race_CV1$df_results)
+
+df_union <- rbind(df_total_SVM_cv1, df_total_SVM_cv1_race)
+```
+
+## Results SVM Models (no Race variable)
+
+### Results SVM Linear
+
+```{r, echo=FALSE}
+rmarkdown::paged_table(linear_result_CV1$df_results, options = list(rows.print = 15, cols.print = 5))
+```
+
+```{r, echo=FALSE}
+write.csv(linear_result_CV1$df_results, file = paste0(WD, "linear_result_CV1.csv"), row.names = FALSE)
+```
+
+### Results SVM Radial
+
+```{r, echo=FALSE}
+rmarkdown::paged_table(radial_result_CV1$df_results, options = list(rows.print = 15, cols.print = 5))
+```
+
+```{r, echo=FALSE}
+write.csv(radial_result_CV1$df_results, file = paste0(WD, "radial_result_CV1.csv"), row.names = FALSE)
+```
+
+### Results SVM Polinómico
+
+```{r, echo=FALSE}
+rmarkdown::paged_table(poly_result_CV1$df_results, options = list(rows.print = 15, cols.print = 5))
+```
+
+```{r, echo=FALSE}
+write.csv(poly_result_CV1$df_results, file = paste0(WD, "poly_result_CV1.csv"), row.names = FALSE)
+```
+
+## Results SVM Models (adding Race variable)
+
+### Results SVM Linear
+
+```{r, echo=FALSE}
+rmarkdown::paged_table(linear_result_Race_CV1$df_results, options = list(rows.print = 15, cols.print = 5))
+```
+
+```{r, echo=FALSE}
+write.csv(linear_result_Race_CV1$df_results, file = paste0(WD, "linear_result_Race_CV1.csv"), row.names = FALSE)
+```
+
+### Results SVM Radial
+
+```{r, echo=FALSE}
+rmarkdown::paged_table(radial_result_Race_CV1$df_results, options = list(rows.print = 15, cols.print = 5))
+```
+
+```{r, echo=FALSE}
+write.csv(radial_result_Race_CV1$df_results, file = paste0(WD, "radial_result_Race_CV1.csv"), row.names = FALSE)
+```
+
+### Results SVM Polinómico
+
+```{r, echo=FALSE}
+rmarkdown::paged_table(poly_result_Race_CV1$df_results, options = list(rows.print = 15, cols.print = 5))
+```
+
+```{r, echo=FALSE}
+write.csv(poly_result_Race_CV1$df_results, file = paste0(WD, "poly_result_Race_CV1.csv"), row.names = FALSE)
+```
+
+## Results LGBM Model (no Race variable)
+
+```{r, echo=FALSE}
+# Base paths for LGBM results
+base_path_eI_lgbm <- "C:/Users/aleja/Documents/github_repositories/prognosis-prediction-TCGA/work_space/df_results_eI"
+base_path_eI_race_lgbm <- "C:/Users/aleja/Documents/github_repositories/prognosis-prediction-TCGA/work_space/df_results_eI_race"
+
+# Number of results files
+num_files <- 5
+
+# Read LGBM results into lists
+list_lgbm_results_eI <- read_lgbm_results(base_path_eI_lgbm, num_files)
+list_lgbm_results_eI_race <- read_lgbm_results(base_path_eI_race_lgbm, num_files)
+
+df_RACE <- data.frame(RACE=clinical_data_fixed$RACE, row.names = rownames(clinical_data_fixed))
+```
+
+```{r, echo=FALSE}
+path_no_bias_results_eI_lgbm <- r"(C:\Users\aleja\Documents\github_repositories\prognosis-prediction-TCGA\work_space\df_score_eI.csv)"
+df_no_bias_results_eI_lgbm <- read.delim(path_no_bias_results_eI_lgbm, header = TRUE, sep = ",", dec = ".", fill = TRUE)
+global <- c("Global", colMeans(df_no_bias_results_eI_lgbm[, -1]))
+df_no_bias_results_eI_lgbm <- rbind(df_no_bias_results_eI_lgbm, global)
+rmarkdown::paged_table(df_no_bias_results_eI_lgbm, options = list(rows.print = 15, cols.print = 5))
+```
+```{r, echo=FALSE}
+write.csv(df_no_bias_results_eI_lgbm, file = paste0(WD, "df_no_bias_results_eI_lgbm.csv"), row.names = FALSE)
+```
+
+### Bias Results
+
+```{r, echo=FALSE}
+# Bias evaluation LGBM results on eIntegration_df
+lgbm_eI_result <- bias_lgbm(list_lgbm_results_eI, df_RACE)
+rmarkdown::paged_table(lgbm_eI_result, options = list(rows.print = 15, cols.print = 5))
+```
+
+```{r, echo=FALSE}
+write.csv(lgbm_eI_result, file = paste0(WD, "lgbm_eI_result.csv"), row.names = FALSE)
+```
+
+## Results LGBM Model (adding Race variable)
+
+```{r, echo=FALSE}
+path_no_bias_results_eI_race_lgbm <- r"(C:\Users\aleja\Documents\github_repositories\prognosis-prediction-TCGA\work_space\df_score_eI_race.csv)"
+df_no_bias_results_eI_race_lgbm <- read.delim(path_no_bias_results_eI_race_lgbm, header = TRUE, sep = ",", dec = ".", fill = TRUE)
+global <- c("Global", colMeans(df_no_bias_results_eI_race_lgbm[, -1]))
+df_no_bias_results_eI_race_lgbm <- rbind(df_no_bias_results_eI_race_lgbm, global)
+rmarkdown::paged_table(df_no_bias_results_eI_race_lgbm, options = list(rows.print = 15, cols.print = 5))
+```
+
+```{r, echo=FALSE}
+write.csv(df_no_bias_results_eI_race_lgbm, file = paste0(WD, "df_no_bias_results_eI_race_lgbm.csv"), row.names = FALSE)
+```
+
+### Bias Results
+
+```{r, echo=FALSE}
+# Bias evaluation LGBM results on eIntegration_df + Race variable (one hot encoding)
+lgbm_eI_race_result <- bias_lgbm(list_lgbm_results_eI_race, df_RACE)
+rmarkdown::paged_table(lgbm_eI_race_result, options = list(rows.print = 15, cols.print = 5))
+```
+
+```{r, echo=FALSE}
+write.csv(lgbm_eI_race_result, file = paste0(WD, "lgbm_eI_race_result.csv"), row.names = FALSE)
+```
+

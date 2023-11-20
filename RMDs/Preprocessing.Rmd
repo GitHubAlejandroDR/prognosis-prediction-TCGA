@@ -1,0 +1,155 @@
+## Null values imputation: `clinical_data`
+
+```{r}
+#### Clinical data imputation
+
+# Delete rows with null values in RACE variable
+clinical_data <- clinical_data[is.na(clinical_data$RACE) == FALSE, ]
+
+# Delete rows with null values in OS_STATUS variable
+clinical_data <- clinical_data[is.na(clinical_data$OS_STATUS) == FALSE, ]
+
+# Delete rows with null values in OS_MONTHS variable
+clinical_data <- clinical_data[is.na(clinical_data$OS_MONTHS) == FALSE, ]
+```
+
+
+## Null Values Imputation: `genomic_data`
+
+```{r}
+#### Genomic raw data imputation
+
+# Delete variables with na in more than 20% of the samples
+perc <- PERC
+col_perc <- perc * ncol(genomic_data) / 100
+genomic_data <- genomic_data[rowSums(is.na(genomic_data)) < col_perc, ]
+
+#### Microbiome data imputation
+
+# Delete variables
+perc <- PERC
+col_perc <- perc * ncol(microbiome_data) / 100
+microbiome_data <- microbiome_data[rowSums(is.na(microbiome_data)) < col_perc, ]
+
+#### Methylation data imputation
+
+# Delete variables with na values
+methylation_data <- methylation_data[rowSums(is.na(methylation_data)) < 1, ]
+
+
+rm(perc, col_perc)
+```
+
+## Duplicate Variables
+
+```{r}
+#### Genomic raw data
+
+# Delete duplicate genes
+genomic_data <- genomic_data[c(unique(row.names(genomic_data))), ]
+
+#### Methylation data
+
+# Delete duplicate CpGs
+methylation_data <- methylation_data[c(unique(row.names(methylation_data))), ]
+
+#### Microbiome data
+
+# Delete duplicate microbiome variables
+microbiome_data <- microbiome_data[c(unique(row.names(microbiome_data))), ]
+```
+
+## Type Transformations
+
+```{r}
+# Genomic raw data
+
+# Transform all character variables to numeric
+genomic_data[, 1:ncol(genomic_data)] <- genomic_data[, 1:ncol(genomic_data)] %>% mutate_if(is.character, as.numeric)
+
+# Methylation data
+
+# Transform all character variables to numeric
+methylation_data[, 1:ncol(methylation_data)] <- methylation_data[, 1:ncol(methylation_data)] %>% mutate_if(is.character, as.numeric)
+
+# Microbiome data
+
+# Transform all character variables to numeric
+microbiome_data[, 1:ncol(microbiome_data)] <- microbiome_data[, 1:ncol(microbiome_data)] %>% mutate_if(is.character, as.numeric)
+
+# Clinical data
+
+# Transform OS_Months to numeric
+clinical_data$OS_MONTHS <- as.numeric(clinical_data$OS_MONTHS)
+## Transform months to days
+clinical_data$OS_MONTHS <- clinical_data$OS_MONTHS * 30.5
+## Transform OS_STATUS to factor
+clinical_data[clinical_data$OS_STATUS == "0:LIVING", "OS_STATUS"] <- 0
+clinical_data[clinical_data$OS_STATUS == "1:DECEASED", "OS_STATUS"] <- 1
+
+## Delete RACE == "Asian" and RACE == "American Indian or Alaska Native" - Not enough observations
+clinical_data <- clinical_data[clinical_data$RACE != "Asian", ]
+clinical_data <- clinical_data[clinical_data$RACE != "American Indian or Alaska Native", ]
+```
+
+```{r,echo=FALSE}
+write.csv(clinical_data, file = paste0(DATA_PROCESSED_DIR, "clinical_data_processed.csv"), row.names = TRUE)
+write.csv(genomic_data, file = paste0(DATA_PROCESSED_DIR, "genomic_data_processed.csv"), row.names = TRUE)
+write.csv(methylation_data, file = paste0(DATA_PROCESSED_DIR, "methylation_data_processed.csv"), row.names = TRUE)
+write.csv(microbiome_data, file = paste0(DATA_PROCESSED_DIR, "microbiome_data_processed.csv"), row.names = TRUE)
+```
+
+
+## Preprocessing Analysis
+
+## Summary `clinical_data`
+
+```{r, echo=FALSE}
+summary_clinical_data_preprocessing <- translate_introduce_columns(introduce(clinical_data))
+columns_subset <- c("Filas", "Columnas", "Columnas Discretas", "Columnas Continuas", "Total Columnas Nulas", "NAs", "Observaciones Totales", "Filas Completas")
+rmarkdown::paged_table(summary_clinical_data_preprocessing[,columns_subset], options = list(rows.print = 15, cols.print = 5))
+```
+
+```{r, echo=FALSE}
+write.csv(summary_clinical_data_preprocessing[,columns_subset], file = paste0(PLOTS_DIR, "summary_clinical_data_preprocessing.csv"), row.names = FALSE)
+rm(summary_clinical_data_preprocessing, columns_subset)
+```
+
+## Summary `genomic_data`
+
+```{r, echo=FALSE}
+summary_genomic_data_preprocessing <- translate_introduce_columns(introduce(genomic_data))
+columns_subset <- c("Filas", "Columnas", "Columnas Discretas", "Columnas Continuas", "Total Columnas Nulas", "NAs", "Observaciones Totales", "Filas Completas")
+rmarkdown::paged_table(summary_genomic_data_preprocessing[,columns_subset], options = list(rows.print = 15, cols.print = 5))
+```
+
+```{r, echo=FALSE}
+write.csv(summary_genomic_data_preprocessing[,columns_subset], file = paste0(PLOTS_DIR, "summary_genomic_data_preprocessing.csv"), row.names = FALSE)
+rm(summary_genomic_data_preprocessing, columns_subset)
+```
+
+## Summary `methylation_data`
+
+```{r, echo=FALSE}
+summary_methylation_data_preprocessing <- translate_introduce_columns(introduce(methylation_data))
+columns_subset <- c("Filas", "Columnas", "Columnas Discretas", "Columnas Continuas", "Total Columnas Nulas", "NAs", "Observaciones Totales", "Filas Completas")
+rmarkdown::paged_table(summary_methylation_data_preprocessing[,columns_subset], options = list(rows.print = 15, cols.print = 5))
+```
+
+```{r, echo=FALSE}
+write.csv(summary_methylation_data_preprocessing[,columns_subset], file = paste0(PLOTS_DIR, "summary_methylation_data_preprocessing.csv"), row.names = FALSE)
+rm(summary_methylation_data_preprocessing, columns_subset)
+```
+
+## Summary `microbiome_data`
+
+```{r, echo=FALSE}
+summary_microbiome_data_preprocessing <- translate_introduce_columns(introduce(microbiome_data))
+columns_subset <- c("Filas", "Columnas", "Columnas Discretas", "Columnas Continuas", "Total Columnas Nulas", "NAs", "Observaciones Totales", "Filas Completas")
+rmarkdown::paged_table(summary_microbiome_data_preprocessing[,columns_subset], options = list(rows.print = 15, cols.print = 5))
+```
+
+```{r, echo=FALSE}
+write.csv(summary_microbiome_data_preprocessing[,columns_subset], file = paste0(PLOTS_DIR, "summary_microbiome_data_preprocessing.csv"), row.names = FALSE)
+rm(summary_microbiome_data_preprocessing, columns_subset)
+```

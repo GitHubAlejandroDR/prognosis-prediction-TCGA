@@ -1,0 +1,162 @@
+## Feature Selection: Differential expression
+
+```{r}
+omic_dfs <- list(genomic_data, methylation_data, microbiome_data)
+diff_dfs <- diff_express(clinical_data_fixed, dfs_omics = omic_dfs, p_val = P)
+df_diff_gen <- as.data.frame(t(diff_dfs$diff_dfs[1][[1]]))
+df_diff_meth <- as.data.frame(t(diff_dfs$diff_dfs[2][[1]]))
+df_diff_micro <- as.data.frame(t(diff_dfs$diff_dfs[3][[1]]))
+
+rm(omic_dfs)
+```
+
+## Data Analysis Differential Expression
+
+```{r}
+diff_pval_geno <- diff_dfs$top_table[1][[1]] %>% select(c("P.Value"))
+diff_pval_meth <- diff_dfs$top_table[2][[1]] %>% select(c("P.Value"))
+diff_pval_micro <- diff_dfs$top_table[3][[1]] %>% select(c("P.Value"))
+
+rm(diff_dfs)
+```
+
+## Data Analysis Differential Expression: `genomic_data`
+
+```{r, echo=FALSE}
+diff_pval_geno[1:10, , drop = F]
+```
+
+```{r, echo=FALSE}
+write.csv(diff_pval_geno[1:10, , drop = F], file = paste0(PLOTS_DIR, "diff_pval_geno.csv"), row.names = TRUE)
+```
+
+
+## Data Analysis Differential Expression: `methylation_data`
+
+```{r, echo=FALSE}
+diff_pval_meth[1:10, , drop = F]
+```
+
+```{r, echo=FALSE}
+write.csv(diff_pval_meth[1:10, , drop = F], file = paste0(PLOTS_DIR, "diff_pval_meth.csv"), row.names = TRUE)
+```
+
+## Data Analysis Differential Expression: `microbiome_data`
+
+```{r, echo=FALSE}
+diff_pval_micro[1:10, , drop = F]
+```
+
+```{r, echo=FALSE}
+write.csv(diff_pval_micro[1:10, , drop = F], file = paste0(PLOTS_DIR, "diff_pval_micro.csv"), row.names = TRUE)
+
+rm(diff_pval_geno, diff_pval_meth, diff_pval_micro)
+```
+
+```{r, echo=FALSE}
+## Add OS_STATUS variable to df_diff omic dataframes
+df_diff_gen$OS_STATUS <- clinical_data_fixed$OS_STATUS
+df_diff_meth$OS_STATUS <- clinical_data_fixed$OS_STATUS
+df_diff_micro$OS_STATUS <- clinical_data_fixed$OS_STATUS
+```
+
+## Create `df_diff` Omic Dataframes + RACE variable
+
+```{r}
+df_diffRace_gen <- df_diff_gen
+df_diffRace_meth <- df_diff_meth
+df_diffRace_micro <- df_diff_micro
+
+data_race <- as.data.frame(clinical_data_fixed$RACE, row.names = row.names(clinical_data_fixed))
+data_race$`clinical_data_fixed$RACE` <- as.factor(data_race$`clinical_data_fixed$RACE`)
+
+# One hot encoding
+oh_race <- one_hot(as.data.table(data_race))
+oh_race <- as.data.frame(oh_race, row.names = row.names(clinical_data_fixed))
+
+df_diffRace_gen <- cbind(df_diffRace_gen, oh_race)
+df_diffRace_meth <- cbind(df_diffRace_meth, oh_race)
+df_diffRace_micro <- cbind(df_diffRace_micro, oh_race)
+```
+
+
+## Feature Selection: Information Gain Filter (30 features most relevant per omic data frame)
+
+```{r}
+df_ig_gen <- informationGain_fs(df_diff_gen, NFEATURES)$df_ig
+df_ig_meth <- informationGain_fs(df_diff_meth, NFEATURES)$df_ig
+df_ig_micro <- informationGain_fs(df_diff_micro, NFEATURES)$df_ig
+```
+
+
+```{r, echo=FALSE}
+result_ig_gen <- informationGain_fs(df_diff_gen, NFEATURES)$result_ig
+result_ig_meth <- informationGain_fs(df_diff_meth, NFEATURES)$result_ig
+result_ig_micro <- informationGain_fs(df_diff_micro, NFEATURES)$result_ig
+
+write.csv(result_ig_gen[1:10, , drop = F], file = paste0(PLOTS_DIR, "result_ig_gen.csv"), row.names = TRUE)
+write.csv(result_ig_meth[1:10, , drop = F], file = paste0(PLOTS_DIR, "result_ig_meth.csv"), row.names = TRUE)
+write.csv(result_ig_micro[1:10, , drop = F], file = paste0(PLOTS_DIR, "result_ig_micro.csv"), row.names = TRUE)
+
+rm(result_ig_gen, result_ig_meth, result_ig_micro)
+```
+
+
+
+## Feature Selection: Information Gain Filter (30 features most relevant per omic + RACE variable data frame)
+
+```{r}
+df_ig_genRace <- informationGain_fs(df_diffRace_gen, NFEATURES)$df_ig
+df_ig_methRace <- informationGain_fs(df_diffRace_meth, NFEATURES)$df_ig
+df_ig_microRace <- informationGain_fs(df_diffRace_micro, NFEATURES)$df_ig
+```
+
+```{r, echo=FALSE}
+result_ig_genRace <- informationGain_fs(df_diffRace_gen, NFEATURES)$result_ig
+result_ig_methRace <- informationGain_fs(df_diffRace_meth, NFEATURES)$result_ig
+result_ig_microRace <- informationGain_fs(df_diffRace_micro, NFEATURES)$result_ig
+
+write.csv(result_ig_genRace[1:10, , drop = F], file = paste0(PLOTS_DIR, "result_ig_genRace.csv"), row.names = TRUE)
+write.csv(result_ig_methRace[1:10, , drop = F], file = paste0(PLOTS_DIR, "result_ig_methRace.csv"), row.names = TRUE)
+write.csv(result_ig_microRace[1:10, , drop = F], file = paste0(PLOTS_DIR, "result_ig_microRace.csv"), row.names = TRUE)
+
+rm(df_diffRace_gen, df_diffRace_meth, df_diffRace_micro, df_diff_gen, df_diff_meth, df_diff_micro, result_ig_genRace, result_ig_methRace, result_ig_microRace)
+```
+
+## Data Analysis Information Gain Filter: Genomic Data
+
+```{r, echo=FALSE}
+print(colnames(df_ig_gen))
+```
+
+## Data Analysis Information Gain Filter: Genomic Data + Race
+
+```{r, echo=FALSE}
+print(colnames(df_ig_genRace))
+```
+
+## Data Analysis Information Gain Filter: Methylation Data
+
+```{r, echo=FALSE}
+print(colnames(df_ig_meth))
+```
+
+## Data Analysis Information Gain Filter: Methylation Data + Race
+
+```{r, echo=FALSE}
+print(colnames(df_ig_methRace))
+```
+
+## Data Analysis Information Gain Filter: Microbiome Data
+
+```{r, echo=FALSE}
+print(colnames(df_ig_micro))
+```
+
+## Data Analysis Information Gain Filter: Microbiome Data + Race
+
+```{r, echo=FALSE}
+print(colnames(df_ig_microRace))
+
+rm(df_ig_microRace, df_ig_methRace, df_ig_genRace)
+```

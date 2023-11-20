@@ -1,0 +1,180 @@
+## Training SVM Models
+
+```{r, warning=FALSE, message=FALSE}
+folds <- FOLD
+set.seed(SEED)
+cv_index1 <- createFolds(eIntegration_df$OS_STATUS, folds, returnTrain = TRUE, list = TRUE)
+
+model <- "svmLinear2"
+
+# svmLinear2
+param_grid_linear2 <- expand.grid(cost = c(0.01, 0.015, 0.1, 0.5, 1, 5, 10, 50, 100))
+
+linear_result_CV1 <- train_model(model, param_grid_linear2, eIntegration_df, cv_index1)
+
+linear_result_Race_CV1 <- train_model(model, param_grid_linear2, eIntegration_df_Race, cv_index1)
+
+model <- "svmRadial"
+
+# svmRadial
+param_grid_radial <- expand.grid(
+  sigma = c(0.001, 0.0015, 0.01, 0.015, 0.1, 0.5, 1, 5, 10, 50, 100),
+  C = c(0.001, 0.0015, 0.01, 0.015, 0.1, 0.5, 1, 5, 10, 50, 100)
+)
+radial_result_CV1 <- train_model(model, param_grid_radial, eIntegration_df, cv_index1)
+
+radial_result_Race_CV1 <- train_model(model, param_grid_radial, eIntegration_df_Race, cv_index1)
+
+model <- "svmPoly"
+
+# svmPoly
+param_grid_poly <- expand.grid(
+  degree = c(1, 2, 3),
+  C = c(0.001, 0.0015, 0.01, 0.015, 0.1, 0.5, 1, 5, 10, 50, 100),
+  scale = c(1)
+)
+poly_result_CV1 <- train_model(model, param_grid_poly, eIntegration_df, cv_index1)
+
+poly_result_Race_CV1 <- train_model(model, param_grid_poly, eIntegration_df_Race, cv_index1)
+```
+
+```{r, eval=FALSE, echo=FALSE}
+df_total_SVM_cv1 <- rbind(linear_result_CV1$df_results, radial_result_CV1$df_results)
+df_total_SVM_cv1 <- rbind(df_total_SVM_cv1, poly_result_CV1$df_results)
+
+df_total_SVM_cv1_race <- rbind(linear_result_Race_CV1$df_results, radial_result_Race_CV1$df_results)
+df_total_SVM_cv1_race <- rbind(df_total_SVM_cv1_race, poly_result_Race_CV1$df_results)
+
+df_union <- rbind(df_total_SVM_cv1, df_total_SVM_cv1_race)
+```
+
+## Results SVM Models (no Race variable)
+
+### Results SVM Linear
+
+```{r, echo=FALSE}
+rmarkdown::paged_table(linear_result_CV1$df_results, options = list(rows.print = 15, cols.print = 5))
+```
+
+```{r, echo=FALSE}
+write.csv(linear_result_CV1$df_results, file = paste0(WD, "linear_result_CV1.csv"), row.names = FALSE)
+```
+
+### Results SVM Radial
+
+```{r, echo=FALSE}
+rmarkdown::paged_table(radial_result_CV1$df_results, options = list(rows.print = 15, cols.print = 5))
+```
+
+```{r, echo=FALSE}
+write.csv(radial_result_CV1$df_results, file = paste0(WD, "radial_result_CV1.csv"), row.names = FALSE)
+```
+
+### Results SVM Polinómico
+
+```{r, echo=FALSE}
+rmarkdown::paged_table(poly_result_CV1$df_results, options = list(rows.print = 15, cols.print = 5))
+```
+
+```{r, echo=FALSE}
+write.csv(poly_result_CV1$df_results, file = paste0(WD, "poly_result_CV1.csv"), row.names = FALSE)
+```
+
+## Results SVM Models (adding Race variable)
+
+### Results SVM Linear
+
+```{r, echo=FALSE}
+rmarkdown::paged_table(linear_result_Race_CV1$df_results, options = list(rows.print = 15, cols.print = 5))
+```
+
+```{r, echo=FALSE}
+write.csv(linear_result_Race_CV1$df_results, file = paste0(WD, "linear_result_Race_CV1.csv"), row.names = FALSE)
+```
+
+### Results SVM Radial
+
+```{r, echo=FALSE}
+rmarkdown::paged_table(radial_result_Race_CV1$df_results, options = list(rows.print = 15, cols.print = 5))
+```
+
+```{r, echo=FALSE}
+write.csv(radial_result_Race_CV1$df_results, file = paste0(WD, "radial_result_Race_CV1.csv"), row.names = FALSE)
+```
+
+### Results SVM Polinómico
+
+```{r, echo=FALSE}
+rmarkdown::paged_table(poly_result_Race_CV1$df_results, options = list(rows.print = 15, cols.print = 5))
+```
+
+```{r, echo=FALSE}
+write.csv(poly_result_Race_CV1$df_results, file = paste0(WD, "poly_result_Race_CV1.csv"), row.names = FALSE)
+```
+
+## Results LGBM Model (no Race variable)
+
+```{r, echo=FALSE}
+# Base paths for LGBM results
+base_path_eI_lgbm <- "C:/Users/aleja/Documents/github_repositories/prognosis-prediction-TCGA/work_space/df_results_eI"
+base_path_eI_race_lgbm <- "C:/Users/aleja/Documents/github_repositories/prognosis-prediction-TCGA/work_space/df_results_eI_race"
+
+# Number of results files
+num_files <- 5
+
+# Read LGBM results into lists
+list_lgbm_results_eI <- read_lgbm_results(base_path_eI_lgbm, num_files)
+list_lgbm_results_eI_race <- read_lgbm_results(base_path_eI_race_lgbm, num_files)
+
+df_RACE <- data.frame(RACE=clinical_data_fixed$RACE, row.names = rownames(clinical_data_fixed))
+```
+
+```{r, echo=FALSE}
+path_no_bias_results_eI_lgbm <- r"(C:\Users\aleja\Documents\github_repositories\prognosis-prediction-TCGA\work_space\df_score_eI.csv)"
+df_no_bias_results_eI_lgbm <- read.delim(path_no_bias_results_eI_lgbm, header = TRUE, sep = ",", dec = ".", fill = TRUE)
+global <- c("Global", colMeans(df_no_bias_results_eI_lgbm[, -1]))
+df_no_bias_results_eI_lgbm <- rbind(df_no_bias_results_eI_lgbm, global)
+rmarkdown::paged_table(df_no_bias_results_eI_lgbm, options = list(rows.print = 15, cols.print = 5))
+```
+```{r, echo=FALSE}
+write.csv(df_no_bias_results_eI_lgbm, file = paste0(WD, "df_no_bias_results_eI_lgbm.csv"), row.names = FALSE)
+```
+
+### Bias Results
+
+```{r, echo=FALSE}
+# Bias evaluation LGBM results on eIntegration_df
+lgbm_eI_result <- bias_lgbm(list_lgbm_results_eI, df_RACE)
+rmarkdown::paged_table(lgbm_eI_result, options = list(rows.print = 15, cols.print = 5))
+```
+
+```{r, echo=FALSE}
+write.csv(lgbm_eI_result, file = paste0(WD, "lgbm_eI_result.csv"), row.names = FALSE)
+```
+
+## Results LGBM Model (adding Race variable)
+
+```{r, echo=FALSE}
+path_no_bias_results_eI_race_lgbm <- r"(C:\Users\aleja\Documents\github_repositories\prognosis-prediction-TCGA\work_space\df_score_eI_race.csv)"
+df_no_bias_results_eI_race_lgbm <- read.delim(path_no_bias_results_eI_race_lgbm, header = TRUE, sep = ",", dec = ".", fill = TRUE)
+global <- c("Global", colMeans(df_no_bias_results_eI_race_lgbm[, -1]))
+df_no_bias_results_eI_race_lgbm <- rbind(df_no_bias_results_eI_race_lgbm, global)
+rmarkdown::paged_table(df_no_bias_results_eI_race_lgbm, options = list(rows.print = 15, cols.print = 5))
+```
+
+```{r, echo=FALSE}
+write.csv(df_no_bias_results_eI_race_lgbm, file = paste0(WD, "df_no_bias_results_eI_race_lgbm.csv"), row.names = FALSE)
+```
+
+### Bias Results
+
+```{r, echo=FALSE}
+# Bias evaluation LGBM results on eIntegration_df + Race variable (one hot encoding)
+lgbm_eI_race_result <- bias_lgbm(list_lgbm_results_eI_race, df_RACE)
+rmarkdown::paged_table(lgbm_eI_race_result, options = list(rows.print = 15, cols.print = 5))
+```
+
+```{r, echo=FALSE}
+write.csv(lgbm_eI_race_result, file = paste0(WD, "lgbm_eI_race_result.csv"), row.names = FALSE)
+```
+

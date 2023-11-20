@@ -1,0 +1,32 @@
+## Early Integration + Normalization 
+
+```{r}
+omic_dfs <- list(df_ig_gen, df_ig_meth, df_ig_micro)
+eIntegration_df <- early_integration(omic_dfs)
+
+# Normalization
+process <- preProcess(eIntegration_df %>% select(-c("OS_STATUS")), method = c("range"))
+eIntegration_df <- predict(process, eIntegration_df %>% select(-c("OS_STATUS")))
+
+
+eIntegration_df$OS_STATUS <- as.factor(clinical_data_fixed$OS_STATUS)
+eIntegration_df$RACE <- as.factor(clinical_data_fixed$RACE)
+levels(eIntegration_df$OS_STATUS) <- make.names(levels(factor(eIntegration_df$OS_STATUS)))
+
+
+rm(omic_dfs, process, df_ig_gen, df_ig_meth, df_ig_micro)
+```
+
+## Early Integration + Normalization + Considering RACE variable
+
+```{r}
+eIntegration_df_Race <- eIntegration_df
+eIntegration_df_Race <- cbind(eIntegration_df_Race, oh_race)
+eIntegration_df_Race$RACE <- as.factor(clinical_data_fixed$RACE)
+```
+
+
+```{r,echo=FALSE}
+write.csv(eIntegration_df, file = paste0(DATA_PROCESSED_DIR, "eIntegration_df.csv"), row.names = TRUE)
+write.csv(eIntegration_df_Race, file = paste0(DATA_PROCESSED_DIR, "eIntegration_df_Race.csv"), row.names = TRUE)
+```

@@ -1,0 +1,51 @@
+---
+title: "`r PROJECT_NAME`"
+author: "Alejandro Domínguez Recio"
+date: "`r format(Sys.time(), '%A %d, %B %Y. %H.%M.%S')`"
+output: 
+ html_document:
+    theme: cerulean
+    number_sections: false
+    toc: true
+    toc_float: true
+    code_folding: "show"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+# Load data
+
+```{r, child='../RMDs/Load.Rmd'}
+```
+
+# Data analysis
+
+```{r, child='../RMDs/DataAnalysis.Rmd'}
+```
+
+# Preprocessing
+
+```{r, child='../RMDs/Preprocessing.Rmd'}
+```
+
+# Data Fixed
+
+```{r, child='../RMDs/DataFixed.Rmd'}
+```
+
+# Feature Selection
+
+```{r, child='../RMDs/FeatureSelection.Rmd'}
+```
+
+# Data Integration
+
+```{r, child='../RMDs/DataIntegration.Rmd'}
+```
+
+# Training
+
+```{r, child='../RMDs/Training.Rmd'}
+```
