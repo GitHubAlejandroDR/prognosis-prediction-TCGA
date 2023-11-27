@@ -105,7 +105,7 @@ Below is an overview of the key directories and their respective roles within th
 
 - **`/plots`**: Plots and summaries outputs
 
-- **`/results`**: Date-organized project execution results. Results are formed by a set of model results .CSV tables and the final .html workflow report.
+- **`/results`**: Date-organized project execution results. Results are formed by a set of model results, .CSV tables, and the final .html workflow report.
   
   - **`/project_Name_results_DATE`**: Result of one execution
 
