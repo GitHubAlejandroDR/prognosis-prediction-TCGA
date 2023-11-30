@@ -1,4 +1,4 @@
-<img src="image_cancer.png" alt="Alt Text" style="width:300px; height:200px;">
+<img src="cancer-image-git.jpg" alt="Alt Text" style="width:100%; height:200px;">
 
 
 # Colorectal Cancer Prognosis Prediction - TCGA Data
